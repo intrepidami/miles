@@ -1456,6 +1456,16 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 ),
             )
             parser.add_argument(
+                "--forward-only",
+                action="store_true",
+                default=False,
+                help=(
+                    "Compute logprobs on the training engine then stop — no backward pass, "
+                    "no optimizer step, no weight update.  SGLang rollout still runs normally. "
+                    "Use with --dump-details and --dumper-enable to capture both sides."
+                ),
+            )
+            parser.add_argument(
                 "--save-debug-train-data",
                 type=str,
                 default=None,

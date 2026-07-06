@@ -395,17 +395,18 @@ class MegatronTrainRayActor(TrainRayActor):
 
             log_rollout_data(rollout_id, self.args, rollout_data)
 
-            # Train
-            self._set_replay_stage("replay_backward")
-            with timer("actor_train"):
-                train(
-                    rollout_id,
-                    self.model,
-                    self.optimizer,
-                    self.opt_param_scheduler,
-                    data_iterator,
-                    num_microbatches,
-                )
+            # Train (skip backward/optimizer in forward-only mode)
+            if not self.args.forward_only:
+                self._set_replay_stage("replay_backward")
+                with timer("actor_train"):
+                    train(
+                        rollout_id,
+                        self.model,
+                        self.optimizer,
+                        self.opt_param_scheduler,
+                        data_iterator,
+                        num_microbatches,
+                    )
 
             self.prof.step(rollout_id=rollout_id)
 

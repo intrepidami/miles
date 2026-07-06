@@ -27,7 +27,8 @@ async def train(args):
         await rollout_manager.onload_weights.remote()
 
     # always update weight first so that sglang has the loaded weights from training.
-    await actor_model.update_weights()
+    if not args.forward_only:
+        await actor_model.update_weights()
 
     if args.check_weight_update_equal:
         await rollout_manager.check_weights.remote(
@@ -72,7 +73,7 @@ async def train(args):
     # train loop.
     # note that for async training, one can change the position of the sync operation(ray.get).
     for rollout_id in range(args.start_rollout_id, args.num_rollout):
-        if args.eval_interval is not None and rollout_id == 0 and not args.skip_eval_before_train:
+        if not args.forward_only and args.eval_interval is not None and rollout_id == 0 and not args.skip_eval_before_train:
             await rollout_manager.eval.remote(rollout_id)
 
         rollout_data_ref = await rollout_manager.generate.remote(rollout_id)
@@ -93,17 +94,18 @@ async def train(args):
         else:
             await actor_model.train(rollout_id, rollout_data_ref)
 
-        if should_run_periodic_action(rollout_id, args.save_interval, num_rollout_per_epoch, args.num_rollout):
+        if not args.forward_only and should_run_periodic_action(rollout_id, args.save_interval, num_rollout_per_epoch, args.num_rollout):
             await save(rollout_id)
 
-        await offload_train()
-        if args.offload_rollout:
-            await rollout_manager.onload_weights.remote()
-        await actor_model.update_weights()
-        if args.offload_rollout:
-            await rollout_manager.onload_kv.remote()
+        if not args.forward_only:
+            await offload_train()
+            if args.offload_rollout:
+                await rollout_manager.onload_weights.remote()
+            await actor_model.update_weights()
+            if args.offload_rollout:
+                await rollout_manager.onload_kv.remote()
 
-        if should_run_periodic_action(rollout_id, args.eval_interval, num_rollout_per_epoch):
+        if not args.forward_only and should_run_periodic_action(rollout_id, args.eval_interval, num_rollout_per_epoch):
             await rollout_manager.eval.remote(rollout_id)
 
     await rollout_manager.dispose.remote()
