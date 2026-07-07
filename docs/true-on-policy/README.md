@@ -17,6 +17,6 @@ true-on-policy work.
 
 ## Files
 
+- `rules.md` - standing working rules for this investigation thread.
 - `worklog.md` - chronological summaries of investigations and decisions.
 - `code-map.md` - compact map of relevant modules and ownership boundaries.
-
