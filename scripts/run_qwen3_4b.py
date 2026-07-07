@@ -36,7 +36,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     enable_mis: bool = False
     use_kl_loss: bool = True
     tis_use_rs: bool = True
-    dumper_dir: str = "/root/code/miles/top_dump"
+    dumper_dir: str = "/root/code/top_dump"
 
     def __post_init__(self):
         if self.train_backend == "megatron":
@@ -90,25 +90,6 @@ def execute(args: ScriptArgs):
     is_debug_mode = args.mode != "normal"
     is_debug_one_sample = args.mode == "debug_one_sample"
     is_top_mode = args.mode == "top"
-
-    # ---- top mode: true-on-policy verification with minimal 1-GPU setup ----
-    if is_top_mode:
-        args.model_name = "Qwen3-0.6B"
-        args.train_backend = "megatron"
-        args.true_on_policy = True
-        args.enable_eval = False
-        args.num_gpus_per_node = 1
-        args.num_nodes = 1
-        if args.train_backend == "megatron":
-            args.megatron_model_type = get_megatron_model_type(args.model_name)
-        # Re-derive parallelism after overriding model_name
-        args.tensor_model_parallel_size = 1
-        args.context_parallel_size = 1
-        args.cp_comm_type = None
-        args.use_sequence_parallel = False
-        args.max_tokens_per_gpu = 9216
-        args.rollout_num_gpus_per_engine = 1
-        args.train_memory_margin_bytes = 3221225472
 
     model_parallel_size = (
         args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
@@ -352,8 +333,30 @@ tis_batch_normalize: true
     )
 
 
+def _apply_top_defaults(args: ScriptArgs) -> None:
+    """Apply top-mode defaults early, before prepare() and execute()."""
+    if args.mode != "top":
+        return
+    args.model_name = "Qwen3-0.6B"
+    args.train_backend = "megatron"
+    args.true_on_policy = True
+    args.enable_eval = False
+    args.num_gpus_per_node = 1
+    args.num_nodes = 1
+    if args.train_backend == "megatron":
+        args.megatron_model_type = get_megatron_model_type(args.model_name)
+    args.tensor_model_parallel_size = 1
+    args.context_parallel_size = 1
+    args.cp_comm_type = None
+    args.use_sequence_parallel = False
+    args.max_tokens_per_gpu = 9216
+    args.rollout_num_gpus_per_engine = 1
+    args.train_memory_margin_bytes = 3221225472
+
+
 @U.dataclass_cli
 def main(args: ScriptArgs):
+    _apply_top_defaults(args)
     prepare(args)
     execute(args)
 
