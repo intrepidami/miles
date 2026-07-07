@@ -52,3 +52,25 @@ Verification:
 - Attempted to run `tests/fast/utils/test_arguments.py` and `tests/fast/true_on_policy/test_run_qwen3_4b.py`.
 - The local environment is missing `torch`, so pytest stopped during import before running tests.
 
+## 2026-07-07 - Candidate Script Search
+
+Need:
+
+- Keep code changes minimal and effective.
+- Write test scripts for training/inference consistency in true-on-policy mode.
+
+Closest existing scripts:
+
+- `tests/e2e/fsdp/test_qwen3_4B_fsdp_true_on_policy.py` is the closest test-script base because it is already an e2e test and uses `--ci-test --true-on-policy-mode`, which reaches the framework's exact log-prob equality assertion.
+- `examples/true_on_policy/run_simple.py` is the closest minimal runnable example and useful for smoke/debug sizing.
+- `scripts/run_qwen3_4b.py` with `tests/fast/true_on_policy/test_run_qwen3_4b.py` is the closest Megatron/Qwen3 launch-plan base, but only validates flags and env vars.
+
+Key checker:
+
+- `miles/backends/training_utils/log_utils.py` asserts `log_dict["log_probs"] == log_dict["rollout_log_probs"]` when `args.ci_test and args.true_on_policy_mode`.
+
+Decision:
+
+- For current Megatron/Qwen3 consistency work, use `scripts/run_qwen3_4b.py` as the primary base to avoid duplicating launch-plan logic.
+- Use `tests/e2e/fsdp/test_qwen3_4B_fsdp_true_on_policy.py` as an e2e structure reference, not the primary backend target, because it is disabled in this branch.
+- Use `examples/true_on_policy/run_simple.py` as the reference for minimal smoke sizing.

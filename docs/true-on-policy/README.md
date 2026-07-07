@@ -18,5 +18,6 @@ true-on-policy work.
 ## Files
 
 - `rules.md` - standing working rules for this investigation thread.
+- `candidate-scripts.md` - closest existing scripts for true-on-policy test work.
 - `worklog.md` - chronological summaries of investigations and decisions.
 - `code-map.md` - compact map of relevant modules and ownership boundaries.
