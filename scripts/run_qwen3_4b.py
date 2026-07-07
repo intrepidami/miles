@@ -13,7 +13,7 @@ from miles.true_on_policy import (
 
 @dataclass
 class ScriptArgs(U.ExecuteTrainConfig):
-    mode: Literal["normal", "debug_minimal", "debug_one_sample"] = "normal"
+    mode: Literal["normal", "debug_minimal", "debug_one_sample", "top"] = "normal"
     run_id: str = U.create_run_id()
     model_name: str = "Qwen3-4B"
     megatron_model_type: str | None = None
@@ -36,6 +36,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     enable_mis: bool = False
     use_kl_loss: bool = True
     tis_use_rs: bool = True
+    dumper_dir: str = "/root/code/miles/top_dump"
 
     def __post_init__(self):
         if self.train_backend == "megatron":
@@ -88,6 +89,27 @@ def prepare(args: ScriptArgs):
 def execute(args: ScriptArgs):
     is_debug_mode = args.mode != "normal"
     is_debug_one_sample = args.mode == "debug_one_sample"
+    is_top_mode = args.mode == "top"
+
+    # ---- top mode: true-on-policy verification with minimal 1-GPU setup ----
+    if is_top_mode:
+        args.model_name = "Qwen3-0.6B"
+        args.train_backend = "megatron"
+        args.true_on_policy = True
+        args.enable_eval = False
+        args.num_gpus_per_node = 1
+        args.num_nodes = 1
+        if args.train_backend == "megatron":
+            args.megatron_model_type = get_megatron_model_type(args.model_name)
+        # Re-derive parallelism after overriding model_name
+        args.tensor_model_parallel_size = 1
+        args.context_parallel_size = 1
+        args.cp_comm_type = None
+        args.use_sequence_parallel = False
+        args.max_tokens_per_gpu = 9216
+        args.rollout_num_gpus_per_engine = 1
+        args.train_memory_margin_bytes = 3221225472
+
     model_parallel_size = (
         args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
     )
@@ -122,26 +144,35 @@ def execute(args: ScriptArgs):
         "--apply-chat-template "
         # By default it is thinking mode
         # """--apply-chat-template-kwargs '{"enable_thinking":false}' """
-        "--rollout-shuffle "
+        f"{'--rollout-shuffle ' if not is_top_mode else ''}"
         "--rm-type math "
-        f"--num-rollout {debug_num_rollout if is_debug_one_sample else 3000} "
-        f"--rollout-batch-size {1 if is_debug_one_sample else 32} "
-        f"--n-samples-per-prompt {1 if is_debug_one_sample else 8} "
-        f"--rollout-max-response-len {2 if is_debug_one_sample else (100 if args.mode == 'debug_minimal' else 8192)} "
-        "--rollout-temperature 1 "
-        f"--global-batch-size {debug_global_batch_size if is_debug_one_sample else 256} "
+        f"--num-rollout {1 if is_top_mode else (debug_num_rollout if is_debug_one_sample else 3000)} "
+        f"--rollout-batch-size {128 if is_top_mode else (1 if is_debug_one_sample else 32)} "
+        f"--n-samples-per-prompt {1 if (is_top_mode or is_debug_one_sample) else 8} "
+        f"--rollout-max-response-len {2048 if is_top_mode else (2 if is_debug_one_sample else (100 if args.mode == 'debug_minimal' else 8192))} "
+        f"--rollout-temperature {0.7 if is_top_mode else 1} "
+        f"--global-batch-size {(128 * 1) if is_top_mode else (debug_global_batch_size if is_debug_one_sample else 256)} "
         "--balance-data "
     )
 
-    if args.dynamic_sampling and not is_debug_mode:
+    if args.dynamic_sampling and not is_debug_mode and not is_top_mode:
         rollout_args += (
             "--over-sampling-batch-size 64 "
             "--dynamic-sampling-filter-path miles.rollout.filter_hub.dynamic_sampling_filters.check_reward_nonzero_std "
         )
 
+    # --- top-mode: dumper + logprob capture ---
+    top_dumper_args = ""
+    if is_top_mode:
+        rollout_args += (
+            "--get-mismatch-metrics "
+            "--custom-tis-function-path examples.train_infer_mismatchzong_helper.mis.compute_mis_weights_with_cp "
+        )
+        top_dumper_args = f"--dumper-enable --dumper-dir {args.dumper_dir} "
+
     # sometimes disable eval to speed up debugging
     eval_args = ""
-    if (not is_debug_mode) and args.enable_eval:
+    if (not is_debug_mode) and not is_top_mode and args.enable_eval:
         eval_max_response_len = 16384
         eval_args += "--eval-interval 20 "
         if args.multi_eval:
@@ -190,7 +221,7 @@ eval:
     sglang_args = (
         f"--rollout-num-gpus-per-engine {args.rollout_num_gpus_per_engine} "
         "--sglang-chunked-prefill-size 4096 "
-        f"{'--sglang-disable-cuda-graph ' if is_debug_one_sample else ''}"
+        f"{'--sglang-disable-cuda-graph ' if (is_debug_one_sample or is_top_mode) else ''}"
     )
     ci_args = "--ci-test --ci-disable-kl-checker " if is_debug_one_sample else ""
 
@@ -240,8 +271,9 @@ eval:
         f"--actor-num-gpus-per-node {actor_num_gpus_per_node} "
         f"--num-gpus-per-node {args.num_gpus_per_node} "
         "--colocate "
-        f"{'--use-fault-tolerance ' if not is_debug_mode else ''}"
+        f"{'--use-fault-tolerance ' if not is_debug_mode and not is_top_mode else ''}"
         f"--dump-details {args.output_dir}/{args.run_id}/dump_details "
+        f"{'--forward-only ' if is_top_mode else ''}"
     )
     misc_env_vars = {}
 
@@ -296,6 +328,7 @@ tis_batch_normalize: true
         f"{grpo_args} "
         f"{U.get_default_wandb_args(__file__, run_id=args.run_id)} "
         f"{perf_args} "
+        f"{top_dumper_args} "
         f"{eval_args} "
         f"{ci_args} "
         f"{sglang_args} "
