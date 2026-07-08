@@ -101,16 +101,38 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 ### `tools/true-on-policy/compute_metrics.py`
 
 ```bash
-python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy
-python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --rollout 0
-python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --json
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --rollout 0
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --json
 ```
 
-输出：
+**读取文件**
 
-- `=== Logprob match ===`：Pearson r（理论值 1.0）、MSE、mean/max/p99 |diff|
-- per-layer mean L2 norm（有 hidden states 时）、Cumulative MSE
-- 结果自动追加到 `<save_dir>/metrics/match.csv`（首次运行写 header）
+| 文件 | 作用 |
+|------|------|
+| `rollout_*/log_probs.npy` | Megatron 重算 logprobs，shape `[total_tokens]` float32 |
+| `rollout_*/rollout_log_probs.npy` | SGLang 生成时 logprobs，shape `[total_tokens]` float32 |
+| `megatron_hs/rank_0/layer_NNN.npy` | Megatron 每层 hidden states，shape `[total_tokens, hidden_dim]` float32（可选） |
+
+所有 `rollout_*` 目录按序 concat 后统一计算（`--rollout N` 只选特定 rollout）。
+
+**计算原理**
+
+| 指标 | 公式 / 方法 |
+|------|-------------|
+| Pearson r | `dot(a-ā, b-b̄) / sqrt(‖a-ā‖² · ‖b-b̄‖²)`，float64 精度；理论值 1.0 |
+| MSE | `mean((log_probs - rollout_log_probs)²)` |
+| mean/max/p99 \|diff\| | 逐 token 绝对差的均值、最大值、99 分位数 |
+| per-layer mean L2 | 对每层 `[total_tokens, hidden_dim]` 按 token 算 L2 norm 后取均值 |
+| Cumulative MSE | `mean(per_layer_mean_L2²)`，衡量各层 hidden state 整体量级 |
+
+**写入文件**
+
+结果自动追加到 `<save_dir>/metrics/match.csv`（首次运行写 header），列：
+
+```
+timestamp, num_tokens, pearson_r, mse, mean_abs_diff, max_abs_diff, p99_abs_diff
+```
 
 ## 落盘文件结构与数据来源
 
