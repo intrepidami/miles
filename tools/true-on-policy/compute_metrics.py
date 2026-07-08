@@ -182,57 +182,61 @@ def _compare_hidden_states(save_dir: Path) -> None:
         return
 
     print(f"  Megatron layers: {sorted(megatron_hs)}  SGLang layers: {sorted(sglang_hs)}")
-    print(f"  {'layer':>5}  {'megatron_shape':>22}  {'sglang_shape':>22}  {'mse':>12}  {'mean_L2_diff':>14}  {'cosine_sim':>12}  {'mean_l2_m':>12}  {'mean_l2_s':>12}")
+    print(f"  {'layer':>5}  {'cosine_sim':>12}  {'mean_l2_m':>12}  {'mean_l2_s':>12}  {'mse':>12}  {'mean_L2_diff':>14}  megatron_shape / sglang_shape")
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    csv_fields = ["timestamp", "layer_id", "megatron_shape", "sglang_shape", "mse", "mean_l2_diff", "cosine_sim", "mean_l2_megatron", "mean_l2_sglang"]
+    # always-computed columns first; shape-match-only (mse, mean_l2_diff) at the end
+    csv_fields = ["timestamp", "layer_id", "megatron_shape", "sglang_shape", "cosine_sim", "mean_l2_megatron", "mean_l2_sglang", "mse", "mean_l2_diff"]
     csv_path = save_dir / "metrics" / "train_rollout_hidden_states.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not csv_path.exists()
 
     rows = []
+    cosine_sims, l2_diffs, mses = [], [], []
     for layer_id in common_layers:
         m = megatron_hs[layer_id].astype(np.float64)
         s = sglang_hs[layer_id].astype(np.float64)
-        # distribution stats computable regardless of shape
         mean_m = m.mean(axis=0)
         mean_s = s.mean(axis=0)
         denom = np.linalg.norm(mean_m) * np.linalg.norm(mean_s)
         cosine_sim = float(np.dot(mean_m, mean_s) / denom) if denom > 0 else float("nan")
         mean_l2_m = float(np.linalg.norm(m, axis=-1).mean())
         mean_l2_s = float(np.linalg.norm(s, axis=-1).mean())
-        if m.shape != s.shape:
-            print(
-                f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  "
-                f"{'shape_mismatch':>12}  {'':>14}  {cosine_sim:>12.6f}  {mean_l2_m:>12.4e}  {mean_l2_s:>12.4e}"
-            )
-            rows.append({
-                "timestamp": timestamp, "layer_id": layer_id,
-                "megatron_shape": str(m.shape), "sglang_shape": str(s.shape),
-                "mse": "", "mean_l2_diff": "",
-                "cosine_sim": f"{cosine_sim:.6f}", "mean_l2_megatron": f"{mean_l2_m:.6e}", "mean_l2_sglang": f"{mean_l2_s:.6e}",
-            })
-            continue
-        diff = m - s
-        mse = float(np.mean(diff ** 2))
-        mean_l2 = float(np.linalg.norm(diff, axis=-1).mean())
-        print(
-            f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  "
-            f"{mse:>12.4e}  {mean_l2:>14.4e}  {cosine_sim:>12.6f}  {mean_l2_m:>12.4e}  {mean_l2_s:>12.4e}"
-        )
-        rows.append({
+        cosine_sims.append(cosine_sim)
+        l2_diffs.append(abs(mean_l2_m - mean_l2_s))
+        row = {
             "timestamp": timestamp, "layer_id": layer_id,
             "megatron_shape": str(m.shape), "sglang_shape": str(s.shape),
-            "mse": f"{mse:.6e}", "mean_l2_diff": f"{mean_l2:.6e}",
-            "cosine_sim": f"{cosine_sim:.6f}", "mean_l2_megatron": f"{mean_l2_m:.6e}", "mean_l2_sglang": f"{mean_l2_s:.6e}",
-        })
+            "cosine_sim": f"{cosine_sim:.6f}",
+            "mean_l2_megatron": f"{mean_l2_m:.6e}", "mean_l2_sglang": f"{mean_l2_s:.6e}",
+            "mse": "", "mean_l2_diff": "",
+        }
+        if m.shape == s.shape:
+            diff = m - s
+            mse = float(np.mean(diff ** 2))
+            mean_l2 = float(np.linalg.norm(diff, axis=-1).mean())
+            mses.append(mse)
+            row["mse"] = f"{mse:.6e}"
+            row["mean_l2_diff"] = f"{mean_l2:.6e}"
+            print(f"  {layer_id:>5}  {cosine_sim:>12.6f}  {mean_l2_m:>12.4e}  {mean_l2_s:>12.4e}  {mse:>12.4e}  {mean_l2:>14.4e}  {m.shape}")
+        else:
+            print(f"  {layer_id:>5}  {cosine_sim:>12.6f}  {mean_l2_m:>12.4e}  {mean_l2_s:>12.4e}  {'shape_mismatch':>12}  {'':>14}  {m.shape} / {s.shape}")
+        rows.append(row)
 
-    with open(csv_path, "a", newline="") as f:
+    # cumulative summary
+    mean_cosine = float(np.mean(cosine_sims)) if cosine_sims else float("nan")
+    mean_l2_scale_diff = float(np.mean(l2_diffs)) if l2_diffs else float("nan")
+    print(f"\n  Cumulative ({len(common_layers)} layers):")
+    print(f"    mean cosine_sim:      {mean_cosine:.6f}")
+    print(f"    mean |ΔL2_norm|:      {mean_l2_scale_diff:.4e}")
+    if mses:
+        cumulative_mse = float(np.mean(mses))
+        print(f"    cumulative MSE:       {cumulative_mse:.6e}")
+
+    with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields)
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
         writer.writerows(rows)
-    print(f"  Hidden state comparison appended to {csv_path}")
+    print(f"  Written {csv_path}")
 
 
 def main() -> None:
@@ -308,13 +312,11 @@ def main() -> None:
     }
     csv_path = save_dir / "metrics" / "match.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not csv_path.exists()
-    with open(csv_path, "a", newline="") as f:
+    with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(csv_row.keys()))
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
         writer.writerow(csv_row)
-    print(f"\nResults appended to {csv_path}")
+    print(f"\nWritten {csv_path}")
 
     if args.json:
         out = {k: v for k, v in csv_row.items()}
