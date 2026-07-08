@@ -169,6 +169,7 @@ python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
 | `miles/utils/arguments.py` | 框架 | 新增 `--skip-train-step` |
 | `miles/backends/megatron_utils/actor.py` | 框架 | `train()` 受 `skip_train_step` 保护 |
 | `miles/backends/training_utils/log_utils.py` | 框架 | `_maybe_save_logprobs()` 自动落盘 |
+| `miles/utils/misc.py` | 框架 | `load_function` 支持文件路径格式 `/path/file.py:func` |
 | `scripts/run_qwen3_4b.py` | 脚本 | 新增 `match` 模式 |
 | `tools/true-on-policy/run_megatron.py` | 工具 | 测试启动器 |
 | `tools/true-on-policy/megatron_hs_hook.py` | 工具 | Megatron hidden state 捕获 hook |
