@@ -124,7 +124,9 @@ def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
             continue
         layer_id = int(layer_m.group(1))
         step = int(step_m.group(1)) if step_m else 0
-        t = torch.load(f, map_location="cpu", weights_only=False)
+        data = torch.load(f, map_location="cpu", weights_only=False)
+        # file format: {"value": tensor, "meta": dict}
+        t = data["value"] if isinstance(data, dict) and "value" in data else data
         # unwrap tuple/list (e.g. Megatron MLP returns (output, bias))
         while isinstance(t, (tuple, list)) and len(t) > 0:
             t = t[0]
