@@ -26,14 +26,38 @@ title: True-On-Policy 实现细节
 | `global-batch-size`        | 128        | -                           |
 | `rollout-shuffle`          | 关闭       | 保证可复现                  |
 | `rollout-seed`             | 42（默认） | 确定性采样                  |
-| `--skip-train-step`               | 开启       | 不修改权重，可反复跑                             |
-| `--deterministic-mode`            | 开启       | 确定性推理                                       |
-| `--true-on-policy-mode`           | 开启       | 触发 Megatron 重算 logprobs                      |
-| `--recompute-logprobs-via-prefill`| 开启       | SGLang 用 prefill 重算 rollout logprobs，对齐真实 true-on-policy 路径 |
-
-三个 flag 对齐 `TrueOnPolicyConfig.build_launch_plan()` 的标准参数集（`miles/true_on_policy/config.py`）。
+| `--skip-train-step`        | 开启       | 不修改权重，可反复跑        |
+| `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
 
 注：`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
+
+`build_launch_plan`（`miles/true_on_policy/config.py`）自动附加 `--recompute-logprobs-via-prefill`，rollout 结束后 SGLang 对完整序列做一次 prefill 重算，覆盖 decode 时的 logprobs。
+
+## 在线 Metric：train_rollout_logprob_abs_diff
+
+`losses.py:policy_loss_function` 在每次训练 forward 中计算（`rollout_log_probs` 存在时）：
+
+| 变量 | 来源 |
+|------|------|
+| `train_scored_log_probs` | `batch["log_probs"]`（Megatron 完整序列重算） |
+| `rollout_log_probs` | `batch["rollout_log_probs"]`（SGLang prefill 重算，由 `--recompute-logprobs-via-prefill` 触发） |
+
+```python
+abs_diff = (train_scored_log_probs - rollout_log_probs).abs()
+# 仅统计 active_tokens，nan/inf 归零
+train_rollout_logprob_abs_diff = sum_of_sample_mean(abs_diff)
+
+# KL(rollout ‖ train)，Schulman k3 近似，per-token clamp [-10, 10]
+train_rollout_kl = sum_of_sample_mean(
+    compute_approx_kl(rollout_log_probs, train_scored_log_probs, kl_loss_type="low_var_kl")
+)
+```
+
+两个 metric 写入 `reported_loss` 并上报 WandB/tensorboard：
+- `train_rollout_logprob_abs_diff`：逐 token 绝对差的 per-sample 均值
+- `train_rollout_kl`：KL(SGLang ‖ Megatron) 的 per-sample 均值
+
+这是训练时的在线指标。`compute_metrics.py` 做的是相同对比的离线版（从落盘 `.npy` 文件计算）。
 
 ## 工具
 
