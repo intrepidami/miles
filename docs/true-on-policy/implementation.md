@@ -112,23 +112,54 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-pol
 - per-layer mean L2 norm（有 hidden states 时）
 - Cumulative MSE
 
-## 落盘文件结构
+## 落盘文件结构与数据来源
+
+### `/root/true-on-policy/`（SAVE_DIR）
 
 ```
-$SAVE_DIR/
-  rollout_0000/
-    log_probs.npy           # [total_tokens] float32 — Megatron 重算
-    rollout_log_probs.npy   # [total_tokens] float32 — SGLang 原始
-  rollout_0001/
+rollout_0000/
+  log_probs.npy           # [total_tokens] float32 — Megatron 重算 logprobs
+  rollout_log_probs.npy   # [total_tokens] float32 — SGLang 生成时 logprobs
+megatron_hs/
+  rank_0/
+    layer_000.npy         # [total_tokens, hidden_dim] float32
+    layer_001.npy
     ...
-  megatron_hs/
-    rank_0/
-      layer_000.npy         # [total_tokens, hidden_dim] float32
-      layer_001.npy
-      ...
 ```
 
-只有 TP rank=0、PP last stage 写文件。多 rank 环境下其他 rank 不产生文件，属正常。
+| 文件 | 生产者 | 调用链 |
+|------|--------|--------|
+| `rollout_*/log_probs.npy` | `log_utils.py:_maybe_save_logprobs()` | `actor.py:train()` → `log_rollout_data()` → `_maybe_save_logprobs()`，由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 触发 |
+| `rollout_*/rollout_log_probs.npy` | 同上 | 同上 |
+| `megatron_hs/rank_0/layer_NNN.npy` | `megatron_hs_hook.py:register()` | `model.py:compute_log_probs()` 前调用，`atexit` 写盘，由 `--custom-megatron-before-log-prob-hook-path` 注入 |
+
+只有 TP rank=0、PP last stage 写文件。
+
+### `/root/output/{run_id}/`（OUTPUT_DIR）
+
+```
+checkpoints/              # Megatron 模型权重（match 模式权重不变）
+dump_details/
+  rollout_data/{rollout_id}.pt   # {rollout_id, samples: [Sample.to_dict()]}
+  train_data/{rollout_id}_{rank}.pt  # {rollout_id, rank, rollout_data: RolloutBatch}
+```
+
+| 文件 | 生产者 | 调用链 |
+|------|--------|--------|
+| `rollout_data/*.pt` | `debug_data.py:save_debug_rollout_data()` | `rollout_manager.py:rollout()` 完成后，含每条 Sample 的 `rollout_log_probs`、tokens、rewards 等 |
+| `train_data/*.pt` | `train_dump_utils.py:save_debug_train_data()` | `actor.py:train()` 末尾，含完整 `RolloutBatch`（同时有 `log_probs` 和 `rollout_log_probs`），可直接对比两者 |
+
+### `/root/true-on-policy/tensor_cmp/`（DUMPER_DIR）
+
+```
+fwd_only/                 # Megatron log-prob pass 每层 hidden states（重算时）
+engines/engine_0/         # SGLang inference 每层 hidden states（生成时）
+```
+
+| 目录 | 生产者 | 调用链 |
+|------|--------|--------|
+| `fwd_only/` | `dumper_utils.py:DumperMegatronUtil(FWD_ONLY)` | `model.py:compute_log_probs()` 中 `DumperMegatronUtil` 注入 PyTorch forward hook，`--dumper-fwd-only enable=true` 触发 |
+| `engines/engine_0/` | SGLang 内置 `sglang.srt.debug_utils.dumper` | `server_group.py` 启动时注入 `DUMPER_SERVER_PORT` 环境变量，`sglang_rollout.py:configure_sglang()` 通过 HTTP `/dumper/configure` 激活，`--dumper-inference enable=true` 触发 |
 
 ## 环境变量
 
