@@ -197,7 +197,7 @@ eval:
     if is_match:
         # --get-mismatch-metrics omitted: use_rollout_logprobs is not set in true-on-policy mode,
         # so actor.py already recomputes Megatron logprobs unconditionally.
-        ci_args += "--skip-train-step --true-on-policy-mode "
+        ci_args += "--skip-train-step --deterministic-mode --true-on-policy-mode --recompute-logprobs-via-prefill "
 
     match args.train_backend:
         case "fsdp":
