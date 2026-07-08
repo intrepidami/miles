@@ -242,33 +242,36 @@ def _plot_logprob_scatter(
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    # --- leftmost: probs scatter (exp of logprobs) ---
+    # subsample for scatter readability
+    n = len(log_probs)
+    idx = np.random.default_rng(0).choice(n, size=min(n, 10000), replace=False)
+    lp, rlp = log_probs[idx], rollout_log_probs[idx]
+    probs = np.exp(lp.astype(np.float64))
+    rollout_probs = np.exp(rlp.astype(np.float64))
+
+    # --- leftmost: probs scatter ---
     ax0 = axes[0]
-    probs = np.exp(log_probs.astype(np.float64))
-    rollout_probs = np.exp(rollout_log_probs.astype(np.float64))
-    hb0 = ax0.hexbin(rollout_probs, probs, gridsize=80, cmap="Greens", mincnt=1, bins="log")
-    fig.colorbar(hb0, ax=ax0, label="log10(count)")
+    ax0.scatter(rollout_probs, probs, s=4, alpha=0.3, linewidths=0)
     lo0 = min(probs.min(), rollout_probs.min())
     hi0 = max(probs.max(), rollout_probs.max())
     ax0.plot([lo0, hi0], [lo0, hi0], "r--", linewidth=1, label="y = x")
     ax0.set_xlabel("rollout_probs (SGLang)")
     ax0.set_ylabel("probs (Megatron)")
-    ax0.set_title("Prob scatter  (exp of logprobs)")
+    ax0.set_title(f"Prob scatter  (n={len(idx):,} sampled)")
     ax0.legend(fontsize=8)
 
-    # --- middle: hexbin scatter of logprobs ---
+    # --- middle: logprob scatter ---
     ax = axes[1]
-    hb = ax.hexbin(rollout_log_probs, log_probs, gridsize=80, cmap="Blues", mincnt=1, bins="log")
-    fig.colorbar(hb, ax=ax, label="log10(count)")
-    lo = min(log_probs.min(), rollout_log_probs.min())
-    hi = max(log_probs.max(), rollout_log_probs.max())
+    ax.scatter(rlp, lp, s=4, alpha=0.3, linewidths=0)
+    lo = min(lp.min(), rlp.min())
+    hi = max(lp.max(), rlp.max())
     ax.plot([lo, hi], [lo, hi], "r--", linewidth=1, label="y = x")
     ax.set_xlabel("rollout_log_probs (SGLang)")
     ax.set_ylabel("log_probs (Megatron)")
     ax.set_title(f"Logprob scatter  Pearson r = {pearson_r:.6f}")
     ax.legend(fontsize=8)
 
-    # --- right: histogram of |diff| ---
+    # --- right: histogram of |diff| (all tokens) ---
     ax2 = axes[2]
     abs_diff = np.abs(log_probs - rollout_log_probs)
     ax2.hist(abs_diff, bins=100, log=True, color="steelblue", edgecolor="none")
