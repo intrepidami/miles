@@ -1,50 +1,37 @@
 ---
-title: True On Policy Code Map
-description: Compact map of relevant Miles files for true-on-policy work.
+title: True-On-Policy 相关代码位置
 ---
 
-# Code Map
+# 相关代码位置
 
-## Entry Points
+## 改动文件
 
-- `train.py` - synchronous rollout/train loop. Creates placement groups, rollout manager, training actors, runs generate/train/save/update/eval.
-- `train_async.py` - asynchronous variant. Starts the next rollout before training current data; does not support colocation.
-- `scripts/run_qwen3_4b.py` - Python launch recipe for Qwen3 dense models, including true-on-policy launch-plan expansion.
+| 文件 | 作用 |
+|------|------|
+| `miles/utils/arguments.py` | CLI 参数注册，包含 `--skip-train-step`、`--true-on-policy-mode` 等 |
+| `miles/backends/megatron_utils/actor.py` | Megatron actor 主循环，logprob 重算和 train 调用在此 |
+| `miles/backends/training_utils/log_utils.py` | `_maybe_save_logprobs()` 落盘逻辑 |
+| `miles/utils/misc.py` | `load_function()`，支持 `/path/file.py:func` 格式 |
+| `scripts/run_qwen3_4b.py` | Qwen3 启动脚本，含 `match` 模式 |
 
-## Configuration
+## True-On-Policy 框架
 
-- `miles/utils/arguments.py` - central CLI registration and validation. Important sections:
-  - train backend selection and backend-specific parser dispatch
-  - rollout/data/eval arguments
-  - true-on-policy and chat-template validation
-  - batch-size invariant checks
-- `miles/true_on_policy/` - true-on-policy contracts, model profiles, and launch-plan defaults.
+| 文件 | 作用 |
+|------|------|
+| `miles/true_on_policy/config.py` | `build_true_on_policy_launch_plan()`，生成确定性参数和 env vars |
+| `miles/true_on_policy/model_profiles.py` | 各模型的 true-on-policy 支持配置 |
 
-## Ray Orchestration
+## 损失计算
 
-- `miles/ray/placement_group.py` - GPU placement, actor/critic group construction, rollout manager construction.
-- `miles/ray/actor_group.py` - RayTrainGroup wrapper around train actor ranks.
-- `miles/ray/train_actor.py` - base train actor process setup, distributed init, and rollout manager connection.
-- `miles/ray/rollout/rollout_manager.py` - rollout lifecycle, conversion to train data, eval, offload/onload, health monitor integration.
+| 文件 | 作用 |
+|------|------|
+| `miles/backends/training_utils/loss_hub/losses.py` | logprob mismatch 判定，`custom_tis_function_path` 调用点 |
+| `miles/backends/training_utils/loss_hub/corrections.py` | `vanilla_tis_function` 等 IS 权重函数 |
 
-## Rollout And Data Contract
+## 工具文件
 
-- `miles/rollout/sglang_rollout.py` - legacy/default SGLang rollout path.
-- `miles/rollout/inference_rollout/` - experimental rollout refactor path; fast tests enable this by default.
-- `miles/rollout/base_types.py` - rollout function input/output dataclasses.
-- `miles/utils/types.py` - `Sample` contract and validation helpers.
-- `miles/ray/rollout/train_data_conversion.py` - converts generated `Sample` objects into per-DP training batches.
-- `miles/rollout/data_source.py` - prompt dataset and buffer management.
-
-## Training Objective
-
-- `miles/backends/training_utils/loss.py` - dispatch and scaling for policy/value/SFT/custom loss.
-- `miles/backends/training_utils/loss_hub/` - advantage estimators, corrections, logit processing, and concrete loss functions.
-
-## Tests
-
-- `tests/fast/true_on_policy/` - launch-plan and true-on-policy config tests.
-- `tests/fast/utils/test_arguments.py` - parser extension and selected validation tests.
-- `tests/e2e/precision/` - precision and alignment oriented checks.
-- `tests/e2e/megatron/` - full Megatron/SGLang integration coverage.
-
+| 文件 | 作用 |
+|------|------|
+| `tools/true-on-policy/run_megatron.py` | 测试启动器 |
+| `tools/true-on-policy/megatron_hs_hook.py` | Megatron hidden state 捕获 |
+| `tools/true-on-policy/compute_metrics.py` | 离线指标计算 |
