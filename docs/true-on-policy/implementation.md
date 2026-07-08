@@ -60,12 +60,12 @@ DUMPER_DIR        = "/root/true-on-policy/tensor_cmp"
 filter 表达式（Python eval 对 tags dict）：
 
 ```python
-"layer_id is not None and name is not None and 'output' in name"
+"layer_id is not None and name is not None and name.endswith('.mlp.output')"
 ```
 
-只捕 transformer 层（`layers.N`）的输出张量，过滤掉输入和子模块中间值。
+只捕每个 transformer 层的 `mlp.output`，即 MLP 子层输出，是每层 hidden state 最好的代理。`layers.N.output` 本身是 tuple 不直接落盘；`"output" in name` 过于宽泛会捕到 `q_norm.output`、`v_proj.output` 等中间张量。
 
-tags 中 `layer_id` 由 SGLang dumper 对匹配 `layers.\d+` 的模块自动注入，`name` 形如 `non_intrusive__model.layers.0.output`。
+tags 中 `layer_id` 由 SGLang dumper 对匹配 `layers.\d+` 的模块自动注入，`name` 形如 `non_intrusive__model.layers.0.mlp.output`。
 
 输出目录结构：
 
