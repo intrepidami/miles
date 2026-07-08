@@ -31,7 +31,7 @@ MEGATRON_PATH = "/root/Megatron-LM"
 SAVE_DIR = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True    # set False to skip megatron_hs_hook (saves memory)
 DUMPER_ENABLE = True            # enable SGLang dumper for rollout + Megatron log-prob pass
-DUMPER_DIR = "/root/true-on-policy/sglang_dumper"  # output dir for dumper tensors
+DUMPER_DIR = "/root/true-on-policy/tensor_cmp"  # output dir for cross-engine tensor comparison
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parents[2]

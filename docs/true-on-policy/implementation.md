@@ -48,7 +48,7 @@ MEGATRON_PATH     = "/root/Megatron-LM"
 SAVE_DIR          = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True
 DUMPER_ENABLE     = True        # SGLang dumper：捕获 rollout + log-prob pass 所有张量
-DUMPER_DIR        = "/root/code/true-on-policy/dumper"
+DUMPER_DIR        = "/root/true-on-policy/tensor_cmp"
 ```
 
 `DUMPER_ENABLE=True` 时自动附加：
@@ -70,11 +70,13 @@ tags 中 `layer_id` 由 SGLang dumper 对匹配 `layers.\d+` 的模块自动注�
 输出目录结构：
 
 ```
-$DUMPER_DIR/
-  fwd_only/      # Megatron log-prob pass 每层 hidden states
+/root/true-on-policy/tensor_cmp/
+  fwd_only/      # Megatron log-prob pass 每层 hidden states（重算时）
   engines/
-    engine_0/    # SGLang rollout 每层 hidden states
+    engine_0/    # SGLang inference 每层 hidden states（生成时）
 ```
+
+两者捕获的不是同一个东西：SGLang 用 KV cache 自回归生成，Megatron 做完整序列前向重算。对比两者是 true-on-policy 调试的目的。
 
 CLI 参数：
 
