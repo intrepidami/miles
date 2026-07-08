@@ -26,8 +26,12 @@ title: True-On-Policy 实现细节
 | `global-batch-size`        | 128        | -                           |
 | `rollout-shuffle`          | 关闭       | 保证可复现                  |
 | `rollout-seed`             | 42（默认） | 确定性采样                  |
-| `--skip-train-step`        | 开启       | 不修改权重，可反复跑        |
-| `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
+| `--skip-train-step`               | 开启       | 不修改权重，可反复跑                             |
+| `--deterministic-mode`            | 开启       | 确定性推理                                       |
+| `--true-on-policy-mode`           | 开启       | 触发 Megatron 重算 logprobs                      |
+| `--recompute-logprobs-via-prefill`| 开启       | SGLang 用 prefill 重算 rollout logprobs，对齐真实 true-on-policy 路径 |
+
+三个 flag 对齐 `TrueOnPolicyConfig.build_launch_plan()` 的标准参数集（`miles/true_on_policy/config.py`）。
 
 注：`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
 
