@@ -1,4 +1,4 @@
-"""Compute true-on-policy consistency metrics from saved logprobs and hidden states.
+"""Compute true-on-policy match metrics from saved logprobs and hidden states.
 
 Reads output from a pipeline run with:
     MILES_TRUE_ON_POLICY_SAVE_DIR=<save_dir>
@@ -6,19 +6,23 @@ Reads output from a pipeline run with:
     --custom-megatron-before-log-prob-hook-path tools/true-on-policy/megatron_hs_hook.py:register
 
 Usage:
-    python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
-    python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy --rollout 0
+    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy
+    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --rollout 0
 
 Metrics computed:
     - Pearson correlation of log_probs vs rollout_log_probs (per token)
     - Per-layer MSE of Megatron hidden states across rollouts (if available)
     - Cumulative MSE across layers
+
+Results are appended to <save_dir>/metrics/match.csv.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -101,7 +105,7 @@ def main() -> None:
     abs_diff = np.abs(log_probs - rollout_log_probs)
     mse = float(np.mean((log_probs - rollout_log_probs) ** 2))
 
-    print("\n=== Logprob consistency ===")
+    print("\n=== Logprob match ===")
     print(f"  tokens:        {log_probs.size}")
     print(f"  Pearson r:     {r:.6f}")
     print(f"  MSE:           {mse:.6e}")
@@ -116,15 +120,27 @@ def main() -> None:
     else:
         print("\nNo Megatron hidden states found (run with --custom-megatron-before-log-prob-hook-path to enable).")
 
+    csv_row = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "num_tokens": int(log_probs.size),
+        "pearson_r": f"{r:.8f}",
+        "mse": f"{mse:.6e}",
+        "mean_abs_diff": f"{abs_diff.mean():.6e}",
+        "max_abs_diff": f"{abs_diff.max():.6e}",
+        "p99_abs_diff": f"{np.percentile(abs_diff, 99):.6e}",
+    }
+    csv_path = save_dir / "metrics" / "match.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not csv_path.exists()
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(csv_row.keys()))
+        if write_header:
+            writer.writeheader()
+        writer.writerow(csv_row)
+    print(f"\nResults appended to {csv_path}")
+
     if args.json:
-        out = {
-            "num_tokens": int(log_probs.size),
-            "pearson_r": r,
-            "mse": mse,
-            "mean_abs_diff": float(abs_diff.mean()),
-            "max_abs_diff": float(abs_diff.max()),
-            "p99_abs_diff": float(np.percentile(abs_diff, 99)),
-        }
+        out = {k: v for k, v in csv_row.items()}
         print("\n" + json.dumps(out, indent=2))
 
 
