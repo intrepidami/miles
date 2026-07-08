@@ -28,10 +28,9 @@ MODEL_DIR = "/root/models"
 DATA_DIR = "/root/datasets"
 OUTPUT_DIR = "/root/output"
 MEGATRON_PATH = "/root/Megatron-LM"
-SAVE_DIR = "/root/true-on-policy"
-CAPTURE_HIDDEN_STATES = True    # set False to skip megatron_hs_hook (saves memory)
-DUMPER_ENABLE = True            # enable SGLang dumper for rollout + Megatron log-prob pass
-DUMPER_DIR = "/root/true-on-policy/tensor_cmp"  # output dir for cross-engine tensor comparison
+BASE_DIR = "/root/true-on-policy"   # each run saves to BASE_DIR/{YYYYMMDD_HHMMSS}/
+CAPTURE_HIDDEN_STATES = True        # set False to skip megatron_hs_hook (saves memory)
+DUMPER_ENABLE = True                # enable SGLang dumper for rollout + Megatron log-prob pass
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -39,7 +38,7 @@ _HOOK_PATH = f"{_REPO_ROOT}/tools/true-on-policy/megatron_hs_hook.py:register"
 _LOG_GUARD = "_MILES_TRUE_ON_POLICY_LOGGED"
 
 
-def _build_args(num_gpus_per_node: int | None = None, num_nodes: int | None = None):
+def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_nodes: int | None = None):
     sys.path.insert(0, str(_REPO_ROOT))
     from scripts.run_qwen3_4b import ScriptArgs
 
@@ -50,7 +49,7 @@ def _build_args(num_gpus_per_node: int | None = None, num_nodes: int | None = No
         _dumper_filter = 'layer_id is not None and name is not None and name.endswith(".mlp.output")'
         extra += (
             f"--dumper-enable "
-            f"--dumper-dir {DUMPER_DIR} "
+            f"--dumper-dir {dumper_dir} "
             f"--dumper-fwd-only enable=true non_intrusive_mode=all filter='{_dumper_filter}' "
             f"--dumper-inference enable=true non_intrusive_mode=all filter='{_dumper_filter}' "
         )
@@ -107,12 +106,18 @@ def main() -> None:
                 lf.write(line)
         sys.exit(proc.wait())
 
+    # Timestamped run directory: BASE_DIR/{YYYYMMDD_HHMMSS}/
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = Path(BASE_DIR) / run_timestamp
+    dumper_dir = save_dir / "tensor_cmp"
+
     # Must be set before execute() spawns subprocesses so workers inherit it.
-    os.environ["MILES_TRUE_ON_POLICY_SAVE_DIR"] = SAVE_DIR
+    os.environ["MILES_TRUE_ON_POLICY_SAVE_DIR"] = str(save_dir)
 
     from scripts.run_qwen3_4b import execute, prepare
 
     args = _build_args(
+        dumper_dir=dumper_dir,
         num_gpus_per_node=cli.num_gpus_per_node,
         num_nodes=cli.num_nodes,
     )
@@ -123,7 +128,7 @@ def main() -> None:
     execute(args)
 
     print(f"\nDone. Compute metrics:")
-    print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {SAVE_DIR}")
+    print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir}")
 
 
 if __name__ == "__main__":
