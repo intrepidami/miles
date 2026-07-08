@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import importlib.util
 import re
 import subprocess
 from contextlib import contextmanager
@@ -55,7 +56,6 @@ def load_function(path):
     # File path format: /path/to/file.py:func_name
     if ":" in path and path.split(":", 1)[0].endswith(".py"):
         file_path, func_name = path.split(":", 1)
-        import importlib.util
         spec = importlib.util.spec_from_file_location("_dyn_hook", file_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
