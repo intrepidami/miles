@@ -247,7 +247,7 @@ def _plot_logprob_scatter(
 
     # --- leftmost: probs scatter ---
     ax0 = axes[0]
-    ax0.scatter(rollout_probs, probs, s=1, alpha=0.1, linewidths=0)
+    ax0.scatter(rollout_probs, probs, s=1, alpha=0.4, linewidths=0)
     lo0 = min(probs.min(), rollout_probs.min())
     hi0 = max(probs.max(), rollout_probs.max())
     ax0.plot([lo0, hi0], [lo0, hi0], "r--", linewidth=1, label="y = x")
@@ -258,7 +258,7 @@ def _plot_logprob_scatter(
 
     # --- middle: logprob scatter ---
     ax = axes[1]
-    ax.scatter(rollout_log_probs, log_probs, s=1, alpha=0.1, linewidths=0)
+    ax.scatter(rollout_log_probs, log_probs, s=1, alpha=0.4, linewidths=0)
     lo = min(log_probs.min(), rollout_log_probs.min())
     hi = max(log_probs.max(), rollout_log_probs.max())
     ax.plot([lo, hi], [lo, hi], "r--", linewidth=1, label="y = x")
@@ -276,9 +276,9 @@ def _plot_logprob_scatter(
     ax2.set_title(f"Abs diff  mean={abs_diff.mean():.2e}  p99={np.percentile(abs_diff, 99):.2e}")
 
     fig.tight_layout()
-    out = save_dir / "metrics" / "logprob_scatter.png"
+    out = save_dir / "metrics" / "logprob_scatter.svg"
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, format="svg")
     plt.close(fig)
     print(f"  Plot saved to {out}")
 
