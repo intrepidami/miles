@@ -301,8 +301,14 @@ def main() -> None:
         help="Rollout IDs to include (default: all). Example: --rollout 0 1",
     )
     parser.add_argument("--json", action="store_true", help="Also print JSON output.")
-    parser.add_argument("--plot", action="store_true", help="Save logprob scatter plot to metrics/logprob_scatter.png.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--metric", action="store_true", help="Compute metrics and write CSV only (default).")
+    mode.add_argument("--plot", action="store_true", help="Generate logprob_scatter.png only.")
+    mode.add_argument("--all", action="store_true", help="Compute metrics and generate plot.")
     args = parser.parse_args()
+
+    do_metric = args.metric or args.all or (not args.plot)
+    do_plot = args.plot or args.all
 
     save_dir: Path = args.save_dir
     rollout_ids: list[int] | None = args.rollout
@@ -327,39 +333,39 @@ def main() -> None:
     abs_diff = np.abs(log_probs - rollout_log_probs)
     mse = float(np.mean((log_probs - rollout_log_probs) ** 2))
 
-    print("\n=== Logprob match ===")
-    print(f"  tokens:        {log_probs.size}")
-    print(f"  Pearson r:     {r:.6f}")
-    print(f"  MSE:           {mse:.6e}")
-    print(f"  mean |diff|:   {abs_diff.mean():.6e}")
-    print(f"  max  |diff|:   {abs_diff.max():.6e}")
-    print(f"  p99  |diff|:   {np.percentile(abs_diff, 99):.6e}")
+    if do_metric:
+        print("\n=== Logprob match ===")
+        print(f"  tokens:        {log_probs.size}")
+        print(f"  Pearson r:     {r:.6f}")
+        print(f"  MSE:           {mse:.6e}")
+        print(f"  mean |diff|:   {abs_diff.mean():.6e}")
+        print(f"  max  |diff|:   {abs_diff.max():.6e}")
+        print(f"  p99  |diff|:   {np.percentile(abs_diff, 99):.6e}")
 
-    _compare_hidden_states(save_dir)
+        _compare_hidden_states(save_dir)
 
-    if args.plot:
+        csv_row = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "num_tokens": int(log_probs.size),
+            "pearson_r": f"{r:.8f}",
+            "mse": f"{mse:.6e}",
+            "mean_abs_diff": f"{abs_diff.mean():.6e}",
+            "max_abs_diff": f"{abs_diff.max():.6e}",
+            "p99_abs_diff": f"{np.percentile(abs_diff, 99):.6e}",
+        }
+        csv_path = save_dir / "metrics" / "match.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(csv_row.keys()))
+            writer.writeheader()
+            writer.writerow(csv_row)
+        print(f"\nWritten {csv_path}")
+
+        if args.json:
+            print("\n" + json.dumps(csv_row, indent=2))
+
+    if do_plot:
         _plot_logprob_scatter(log_probs, rollout_log_probs, r, save_dir)
-
-    csv_row = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "num_tokens": int(log_probs.size),
-        "pearson_r": f"{r:.8f}",
-        "mse": f"{mse:.6e}",
-        "mean_abs_diff": f"{abs_diff.mean():.6e}",
-        "max_abs_diff": f"{abs_diff.max():.6e}",
-        "p99_abs_diff": f"{np.percentile(abs_diff, 99):.6e}",
-    }
-    csv_path = save_dir / "metrics" / "match.csv"
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(csv_row.keys()))
-        writer.writeheader()
-        writer.writerow(csv_row)
-    print(f"\nWritten {csv_path}")
-
-    if args.json:
-        out = {k: v for k, v in csv_row.items()}
-        print("\n" + json.dumps(out, indent=2))
 
 
 if __name__ == "__main__":
