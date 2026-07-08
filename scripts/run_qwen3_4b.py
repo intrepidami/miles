@@ -195,9 +195,7 @@ eval:
     )
     ci_args = "--ci-test --ci-disable-kl-checker " if is_debug_one_sample else ""
     if is_match:
-        # --get-mismatch-metrics omitted: use_rollout_logprobs is not set in true-on-policy mode,
-        # so actor.py already recomputes Megatron logprobs unconditionally.
-        ci_args += "--skip-train-step --deterministic-mode --true-on-policy-mode --recompute-logprobs-via-prefill "
+        ci_args += "--skip-train-step "
 
     match args.train_backend:
         case "fsdp":

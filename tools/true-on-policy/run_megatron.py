@@ -42,7 +42,7 @@ def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_node
     sys.path.insert(0, str(_REPO_ROOT))
     from scripts.run_qwen3_4b import ScriptArgs
 
-    extra = ""
+    extra = "--true-on-policy-mode "
     if CAPTURE_HIDDEN_STATES:
         extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
     if DUMPER_ENABLE:
@@ -137,11 +137,12 @@ def main() -> None:
         shutil.move(str(dump_details_src), str(dump_details_dst))
         print(f"Moved dump_details → {dump_details_dst}")
 
+    _cfg = f"--model-name {MODEL_NAME} --batch-size 128 --max-response-len 2048"
     print(f"\nDone. Compute metrics:")
-    print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir}")
+    print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir} {_cfg}")
     if dump_details_src:
         print(f"  # or with dump_details:")
-        print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir} --dump-details {save_dir}/dump_details")
+        print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir} --dump-details {save_dir}/dump_details {_cfg}")
 
 
 if __name__ == "__main__":

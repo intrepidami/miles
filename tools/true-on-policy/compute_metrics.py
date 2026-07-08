@@ -182,10 +182,10 @@ def _compare_hidden_states(save_dir: Path) -> None:
         return
 
     print(f"  Megatron layers: {sorted(megatron_hs)}  SGLang layers: {sorted(sglang_hs)}")
-    print(f"  {'layer':>5}  {'megatron_shape':>22}  {'sglang_shape':>22}  {'mse':>12}  {'mean_L2_diff':>14}")
+    print(f"  {'layer':>5}  {'megatron_shape':>22}  {'sglang_shape':>22}  {'mse':>12}  {'mean_L2_diff':>14}  {'cosine_sim':>12}  {'mean_l2_m':>12}  {'mean_l2_s':>12}")
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    csv_fields = ["timestamp", "layer_id", "megatron_shape", "sglang_shape", "mse", "mean_l2_diff"]
+    csv_fields = ["timestamp", "layer_id", "megatron_shape", "sglang_shape", "mse", "mean_l2_diff", "cosine_sim", "mean_l2_megatron", "mean_l2_sglang"]
     csv_path = save_dir / "metrics" / "train_rollout_hidden_states.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not csv_path.exists()
@@ -194,22 +194,37 @@ def _compare_hidden_states(save_dir: Path) -> None:
     for layer_id in common_layers:
         m = megatron_hs[layer_id].astype(np.float64)
         s = sglang_hs[layer_id].astype(np.float64)
+        # distribution stats computable regardless of shape
+        mean_m = m.mean(axis=0)
+        mean_s = s.mean(axis=0)
+        denom = np.linalg.norm(mean_m) * np.linalg.norm(mean_s)
+        cosine_sim = float(np.dot(mean_m, mean_s) / denom) if denom > 0 else float("nan")
+        mean_l2_m = float(np.linalg.norm(m, axis=-1).mean())
+        mean_l2_s = float(np.linalg.norm(s, axis=-1).mean())
         if m.shape != s.shape:
-            print(f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  {'shape mismatch':>12}")
+            print(
+                f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  "
+                f"{'shape_mismatch':>12}  {'':>14}  {cosine_sim:>12.6f}  {mean_l2_m:>12.4e}  {mean_l2_s:>12.4e}"
+            )
             rows.append({
                 "timestamp": timestamp, "layer_id": layer_id,
                 "megatron_shape": str(m.shape), "sglang_shape": str(s.shape),
                 "mse": "", "mean_l2_diff": "",
+                "cosine_sim": f"{cosine_sim:.6f}", "mean_l2_megatron": f"{mean_l2_m:.6e}", "mean_l2_sglang": f"{mean_l2_s:.6e}",
             })
             continue
         diff = m - s
         mse = float(np.mean(diff ** 2))
         mean_l2 = float(np.linalg.norm(diff, axis=-1).mean())
-        print(f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  {mse:>12.4e}  {mean_l2:>14.4e}")
+        print(
+            f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  "
+            f"{mse:>12.4e}  {mean_l2:>14.4e}  {cosine_sim:>12.6f}  {mean_l2_m:>12.4e}  {mean_l2_s:>12.4e}"
+        )
         rows.append({
             "timestamp": timestamp, "layer_id": layer_id,
             "megatron_shape": str(m.shape), "sglang_shape": str(s.shape),
             "mse": f"{mse:.6e}", "mean_l2_diff": f"{mean_l2:.6e}",
+            "cosine_sim": f"{cosine_sim:.6f}", "mean_l2_megatron": f"{mean_l2_m:.6e}", "mean_l2_sglang": f"{mean_l2_s:.6e}",
         })
 
     with open(csv_path, "a", newline="") as f:
@@ -242,6 +257,9 @@ def main() -> None:
         help="Rollout IDs to include (default: all). Example: --rollout 0 1",
     )
     parser.add_argument("--json", action="store_true", help="Also print JSON output.")
+    parser.add_argument("--model-name", default="", help="Model name written to CSV (e.g. Qwen3-0.6B).")
+    parser.add_argument("--batch-size", type=int, default=None, help="rollout-batch-size written to CSV.")
+    parser.add_argument("--max-response-len", type=int, default=None, help="rollout-max-response-len written to CSV.")
     args = parser.parse_args()
 
     save_dir: Path = args.save_dir
@@ -278,6 +296,9 @@ def main() -> None:
 
     csv_row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "model_name": args.model_name,
+        "batch_size": "" if args.batch_size is None else str(args.batch_size),
+        "max_response_len": "" if args.max_response_len is None else str(args.max_response_len),
         "num_tokens": int(log_probs.size),
         "pearson_r": f"{r:.8f}",
         "mse": f"{mse:.6e}",
