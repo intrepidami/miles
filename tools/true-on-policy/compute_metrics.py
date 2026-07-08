@@ -240,10 +240,24 @@ def _plot_logprob_scatter(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    # --- left: hexbin scatter (rollout vs train) ---
-    ax = axes[0]
+    # --- leftmost: probs scatter (exp of logprobs) ---
+    ax0 = axes[0]
+    probs = np.exp(log_probs.astype(np.float64))
+    rollout_probs = np.exp(rollout_log_probs.astype(np.float64))
+    hb0 = ax0.hexbin(rollout_probs, probs, gridsize=80, cmap="Greens", mincnt=1, bins="log")
+    fig.colorbar(hb0, ax=ax0, label="log10(count)")
+    lo0 = min(probs.min(), rollout_probs.min())
+    hi0 = max(probs.max(), rollout_probs.max())
+    ax0.plot([lo0, hi0], [lo0, hi0], "r--", linewidth=1, label="y = x")
+    ax0.set_xlabel("rollout_probs (SGLang)")
+    ax0.set_ylabel("probs (Megatron)")
+    ax0.set_title("Prob scatter  (exp of logprobs)")
+    ax0.legend(fontsize=8)
+
+    # --- middle: hexbin scatter of logprobs ---
+    ax = axes[1]
     hb = ax.hexbin(rollout_log_probs, log_probs, gridsize=80, cmap="Blues", mincnt=1, bins="log")
     fig.colorbar(hb, ax=ax, label="log10(count)")
     lo = min(log_probs.min(), rollout_log_probs.min())
@@ -255,7 +269,7 @@ def _plot_logprob_scatter(
     ax.legend(fontsize=8)
 
     # --- right: histogram of |diff| ---
-    ax2 = axes[1]
+    ax2 = axes[2]
     abs_diff = np.abs(log_probs - rollout_log_probs)
     ax2.hist(abs_diff, bins=100, log=True, color="steelblue", edgecolor="none")
     ax2.set_xlabel("|log_probs − rollout_log_probs|")
