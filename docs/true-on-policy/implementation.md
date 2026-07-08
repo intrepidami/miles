@@ -125,9 +125,16 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/2
 |------|------|
 | `rollout_*/log_probs.npy` | Megatron 重算 logprobs，`[total_tokens]` float32 |
 | `rollout_*/rollout_log_probs.npy` | SGLang 生成时 logprobs，`[total_tokens]` float32 |
-| `megatron_hs/rank_0/layer_NNN.npy` | Megatron 每层 hidden states，`[total_tokens, hidden_dim]` float32（可选） |
+| `tensor_cmp/fwd_only/*.pt` | Megatron log-prob pass 每层 mlp.output（dumper 产生） |
+| `tensor_cmp/engines/engine_0/*.pt` | SGLang inference 每层 mlp.output（dumper 产生） |
 
-由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制（`log_utils.py:_maybe_save_logprobs()`）产生。
+logprob 文件由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制产生；tensor_cmp 文件由 `DUMPER_ENABLE=True` 产生。
+
+**Hidden state 对比**（自动，当 `tensor_cmp/` 存在时）
+
+从 `tensor_cmp/fwd_only/` 和 `tensor_cmp/engines/engine_0/` 读取 `.pt` 文件，按 `layer_id` 分组，按 `step` 排序后 concat，得到 `[total_tokens, hidden_dim]`。对每层计算 MSE 和 mean L2 diff。
+
+注意：Megatron 是 full-sequence batch forward，SGLang 是 prefill(step=0) + 每 decode step 一个 token。两者 concat 后 token 总数应相同，但**顺序可能不同**（序列长度不一致时）。MSE 仅在形状和顺序均一致时有意义。
 
 **Mode 2 — dump_details .pt**
 
