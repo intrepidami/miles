@@ -93,6 +93,29 @@ def aggregate_forward_results(
     return rollout_data
 
 
+def _maybe_save_logprobs(rollout_data: RolloutBatch, rollout_id: int) -> None:
+    """Save per-token log_probs and rollout_log_probs when MILES_TRUE_ON_POLICY_SAVE_DIR is set."""
+    import os
+
+    save_dir = os.environ.get("MILES_TRUE_ON_POLICY_SAVE_DIR")
+    if not save_dir:
+        return
+    parallel_state = get_parallel_state()
+    if parallel_state.tp.rank != 0 or not parallel_state.is_pp_last_stage:
+        return
+    from pathlib import Path
+
+    out = Path(save_dir) / f"rollout_{rollout_id:04d}"
+    out.mkdir(parents=True, exist_ok=True)
+    for key in ("log_probs", "rollout_log_probs"):
+        val = rollout_data.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (list, tuple)) and val and isinstance(val[0], torch.Tensor):
+            arr = torch.cat(val).float().detach().cpu().numpy()
+            np.save(out / f"{key}.npy", arr)
+
+
 def log_rollout_data(rollout_id: int, args: Namespace, rollout_data: RolloutBatch) -> None:
     """
     Summarize rollout fields and log reduced metrics on PP last stage, TP rank 0.
@@ -103,6 +126,7 @@ def log_rollout_data(rollout_id: int, args: Namespace, rollout_data: RolloutBatc
     - Non-tensor lists are averaged elementwise.
     - Scalars are converted to Python numbers.
     """
+    _maybe_save_logprobs(rollout_data, rollout_id)
     parallel_state = get_parallel_state()
     if parallel_state.tp.rank == 0 and parallel_state.is_pp_last_stage:
         cp_size = parallel_state.cp.size

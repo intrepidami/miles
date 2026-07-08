@@ -13,7 +13,7 @@ from miles.true_on_policy import (
 
 @dataclass
 class ScriptArgs(U.ExecuteTrainConfig):
-    mode: Literal["normal", "debug_minimal", "debug_one_sample"] = "normal"
+    mode: Literal["normal", "debug_minimal", "debug_one_sample", "match"] = "normal"
     run_id: str = U.create_run_id()
     model_name: str = "Qwen3-4B"
     megatron_model_type: str | None = None
@@ -88,6 +88,7 @@ def prepare(args: ScriptArgs):
 def execute(args: ScriptArgs):
     is_debug_mode = args.mode != "normal"
     is_debug_one_sample = args.mode == "debug_one_sample"
+    is_match = args.mode == "match"
     model_parallel_size = (
         args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
     )
@@ -124,12 +125,12 @@ def execute(args: ScriptArgs):
         # """--apply-chat-template-kwargs '{"enable_thinking":false}' """
         "--rollout-shuffle "
         "--rm-type math "
-        f"--num-rollout {debug_num_rollout if is_debug_one_sample else 3000} "
-        f"--rollout-batch-size {1 if is_debug_one_sample else 32} "
-        f"--n-samples-per-prompt {1 if is_debug_one_sample else 8} "
-        f"--rollout-max-response-len {2 if is_debug_one_sample else (100 if args.mode == 'debug_minimal' else 8192)} "
+        f"--num-rollout {2 if is_match else (debug_num_rollout if is_debug_one_sample else 3000)} "
+        f"--rollout-batch-size {128 if is_match else (1 if is_debug_one_sample else 32)} "
+        f"--n-samples-per-prompt {1 if is_match else (1 if is_debug_one_sample else 8)} "
+        f"--rollout-max-response-len {2048 if is_match else (2 if is_debug_one_sample else (100 if args.mode == 'debug_minimal' else 8192))} "
         "--rollout-temperature 1 "
-        f"--global-batch-size {debug_global_batch_size if is_debug_one_sample else 256} "
+        f"--global-batch-size {128 if is_match else (debug_global_batch_size if is_debug_one_sample else 256)} "
         "--balance-data "
     )
 
@@ -193,6 +194,8 @@ eval:
         f"{'--sglang-disable-cuda-graph ' if is_debug_one_sample else ''}"
     )
     ci_args = "--ci-test --ci-disable-kl-checker " if is_debug_one_sample else ""
+    if is_match:
+        ci_args += "--skip-train-step --true-on-policy-mode --get-mismatch-metrics "
 
     match args.train_backend:
         case "fsdp":

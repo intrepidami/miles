@@ -185,6 +185,16 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
                 help="Add margin for train memory allocation. By default we will reserve 1GB as margin.",
             )
             parser.add_argument(
+                "--skip-train-step",
+                action="store_true",
+                default=False,
+                help=(
+                    "Skip the actor backward pass and optimizer step entirely. "
+                    "Rollout and log-prob forward (compute_log_prob + log_rollout_data) still run. "
+                    "Useful for forward-only consistency tests."
+                ),
+            )
+            parser.add_argument(
                 "--debug-skip-weight-update",
                 action="store_true",
                 default=False,

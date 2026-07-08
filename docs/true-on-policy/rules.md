@@ -5,16 +5,22 @@ description: Standing rules for maintaining true-on-policy investigation notes a
 
 # Working Rules
 
+## Workflow
+
+- Before every action, list the plan explicitly.
+
 ## Documentation
 
-- Store compressed engineering notes under `docs/true-on-policy/`.
-- Record conclusions, file relationships, risks, decisions, and next steps.
-- Do not store raw scratchpad reasoning.
-- Tell the user when these notes are updated.
+- `docs/true-on-policy/` is the primary reference source. Read it before starting any task in this area.
+- Record every new finding, decision, or rule immediately after established.
+- Use concise, factual language. No reasoning narrative.
+- Files here take precedence over memory when they conflict.
+- Tell the user when notes are updated.
 
 ## Code Changes
 
-- Prefer the smallest effective code change that exercises the required behavior.
+- Make the smallest possible change. Prefer zero source modifications.
+- Add new files (tests, wrappers, configs) before touching existing source.
 - Avoid refactors unless they directly reduce the change needed for true-on-policy testing.
 
 ## Test Work

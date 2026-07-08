@@ -21,3 +21,13 @@ true-on-policy work.
 - `candidate-scripts.md` - closest existing scripts for true-on-policy test work.
 - `worklog.md` - chronological summaries of investigations and decisions.
 - `code-map.md` - compact map of relevant modules and ownership boundaries.
+- `tools.md` - changed files, launch flags, and usage for logprob/hidden-state consistency metrics.
+
+## Usage Contract
+
+This directory is the primary reference source for all true-on-policy work.
+
+- Read relevant files here before starting any new task in this area.
+- Record every new finding, decision, or rule here immediately after established.
+- Use concise, factual language. No reasoning narrative.
+- Files here take precedence over memory when they conflict.

@@ -52,6 +52,92 @@ Verification:
 - Attempted to run `tests/fast/utils/test_arguments.py` and `tests/fast/true_on_policy/test_run_qwen3_4b.py`.
 - The local environment is missing `torch`, so pytest stopped during import before running tests.
 
+## 2026-07-07 - GateGuard Config
+
+- Added `GATEGUARD_EXEMPT_GLOBS=docs/true-on-policy/**` to `.claude/settings.local.json`.
+- Effect: no fact-forcing gate on any file under this directory.
+
+## 2026-07-07 - Forward-Only Consistency Test: Two Approaches
+
+Goal: verify SGLang logprobs == Megatron logprobs on fixed token input, with per-layer hidden states and Pearson/MSE metrics.
+
+### Approach A — Standalone diagnostic scripts (tools/consistency/)
+
+Files: `gen_fixed_tokens.py`, `megatron_score.py`, `sglang_score.py`, `compute_metrics.py`.
+
+Pros:
+- Fixed deterministic token input (128×2048, seed=42)
+- No Ray cluster, no real dataset needed; 1-2 GPU
+- Can capture per-layer hidden states (not available in production path)
+- Zero source modifications
+
+Cons:
+- Not the production path — custom batch prep, custom data conversion may mask real discrepancies
+- Cannot catch bugs that only appear in the full pipeline (weight sync, rollout data conversion)
+- Not CI-registerable
+- Extra maintenance burden
+
+Best for: diagnostic/debugging, hidden-state comparison, fast iteration.
+
+### Approach B — Full pipeline with existing assertions
+
+Use `scripts/run_qwen3_4b.py` with `mode="debug_one_sample"`, `--ci-test`, `--true-on-policy-mode`. The framework's existing `log_dict["log_probs"] == log_dict["rollout_log_probs"]` assertion in `log_utils.py:207` fires automatically.
+
+Pros:
+- Exact production path — rollout, data conversion, weight sync all included
+- Assertion already built in; no new checker needed
+- CI-registerable as e2e test
+
+Cons:
+- Requires full Ray cluster, SGLang server, real dataset
+- Token input not fixed (data-set-dependent)
+- Slow; high iteration cost
+- No per-layer hidden states without additional work
+- No Pearson/MSE metrics without additions
+
+Best for: CI regression, end-to-end validation of real training runs.
+
+### Decision rule
+
+Use Approach A when: fixed token input required, hidden states needed, fast iteration, no cluster available.
+Use Approach B when: CI registration required, production path must be validated, cluster is available.
+
+Current work targets Approach B + instrumentation (real data, true-on-policy mode, with metric collection added on top).
+
+## 2026-07-07 - Consistency Tools Implementation
+
+Files created:
+- `tools/true-on-policy/megatron_hs_hook.py` — forward hook for per-layer Megatron hidden states; registered via `--custom-megatron-before-log-prob-hook-path tools/true-on-policy/megatron_hs_hook.py:register`; saves to `$MILES_TRUE_ON_POLICY_SAVE_DIR/megatron_hs/rank_{r}/layer_{i:03d}.npy`
+- `tools/true-on-policy/compute_metrics.py` — loads saved logprobs + hidden states, computes Pearson(log_probs, rollout_log_probs), per-layer L2 norm, cumulative MSE
+
+Source change:
+- `miles/backends/training_utils/log_utils.py` — added `_maybe_save_logprobs()`, called from `log_rollout_data()` when `MILES_TRUE_ON_POLICY_SAVE_DIR` is set; saves per-token `log_probs.npy` and `rollout_log_probs.npy` per rollout step
+
+Existing args to use (no source change needed):
+- `--true-on-policy-mode`: ensures both SGLang rollout_log_probs and Megatron log_probs are computed
+- `--get-mismatch-metrics`: forces Megatron log_prob recompute even when `--use-rollout-logprobs` is set
+- `--dumper-enable --dumper-fwd-only 'enable=true non_intrusive_mode=...'`: Megatron HS via existing dumper (alternative to hook)
+- `--dumper-inference 'enable=true non_intrusive_mode=...'`: SGLang HS via existing dumper
+
+Additional source changes (2026-07-08):
+- `miles/utils/arguments.py` — added `--skip-train-step` flag (skips backward + optimizer, rollout and log-prob forward still run)
+- `miles/backends/megatron_utils/actor.py` — guards `train()` call with `args.skip_train_step`
+- `scripts/run_qwen3_4b.py` — added `"match"` mode: `rollout-batch-size=128`, `rollout-max-response-len=2048`, `n-samples-per-prompt=1`, `num-rollout=2`, `--skip-train-step --true-on-policy-mode --get-mismatch-metrics`
+- `tools/true-on-policy/run_megatron.py` — updated to use `mode="match"`
+
+Minimum launch flags for logprob comparison:
+```
+MILES_TRUE_ON_POLICY_SAVE_DIR=/tmp/true-on-policy \
+  python train.py \
+  --true-on-policy-mode \
+  [other required args...]
+```
+
+After run:
+```
+python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
+```
+
 ## 2026-07-07 - Candidate Script Search
 
 Need:
