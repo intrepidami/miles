@@ -37,10 +37,10 @@ title: True-On-Policy 实现细节
 
 `losses.py:policy_loss_function` 在每次训练 forward 中计算（`rollout_log_probs` 存在时）：
 
-| 变量 | 来源 |
-|------|------|
-| `train_scored_log_probs` | `batch["log_probs"]`（Megatron 完整序列重算） |
-| `rollout_log_probs` | `batch["rollout_log_probs"]`（SGLang prefill 重算，由 `--recompute-logprobs-via-prefill` 触发） |
+| 变量                       | 来源                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| `train_scored_log_probs` | `batch["log_probs"]`（Megatron 完整序列重算）                                                     |
+| `rollout_log_probs`      | `batch["rollout_log_probs"]`（SGLang prefill 重算，由 `--recompute-logprobs-via-prefill` 触发） |
 
 ```python
 abs_diff = (train_scored_log_probs - rollout_log_probs).abs()
@@ -54,6 +54,7 @@ train_rollout_kl = sum_of_sample_mean(
 ```
 
 两个 metric 写入 `reported_loss` 并上报 WandB/tensorboard：
+
 - `train_rollout_logprob_abs_diff`：逐 token 绝对差的 per-sample 均值
 - `train_rollout_kl`：KL(SGLang ‖ Megatron) 的 per-sample 均值
 
@@ -128,19 +129,17 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 
 ### `tools/true-on-policy/compute_metrics.py`
 
-支持两种数据来源（logprob 输入互斥，CSV 始终写 `<save_dir>/metrics/match.csv`）。
+模式自动推导：`{save_dir}/dump_details/train_data/` 存在时用 Mode 2（dump_details），否则用 Mode 1（.npy）。CSV 始终写 `<save_dir>/metrics/match.csv`。
 
 **参数**
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `--save-dir PATH` | 必填 | 运行目录（`BASE_DIR/YYYYMMDD_HHMMSS/`）；Mode 1 读 `.npy`，始终写 CSV |
-| `--dump-details PATH` | 可选 | Mode 2：`dump_details/` 目录，从 `train_data/*.pt` 读 logprobs |
-| `--rank INT` | 可选，默认 0 | Mode 2：读 `{rollout_id}_{rank}.pt` 中哪个 rank |
-| `--rollout INT...` | 可选，默认全部 | 指定 rollout ID，如 `--rollout 0 1` |
-| `--json` | flag | 额外打印 JSON |
-
-**Mode 1 — .npy（默认）**
+| 参数                 | 类型           | 说明                                                |
+| -------------------- | -------------- | --------------------------------------------------- |
+| `--save-dir PATH`  | 必填           | 运行目录（`BASE_DIR/YYYYMMDD_HHMMSS/`）；始终写 CSV |
+| `--rank INT`       | 可选，默认 0   | dump_details 模式：读 `{rollout_id}_{rank}.pt`    |
+| `--rollout INT...` | 可选，默认全部 | 指定 rollout ID，如 `--rollout 0 1`               |
+| `--json`           | flag           | 额外打印 JSON                                       |
+| `--plot`           | flag           | 生成 `metrics/logprob_scatter.png`                |
 
 ```bash
 python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022
@@ -149,12 +148,12 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/2
 
 读取文件：
 
-| 文件 | 作用 |
-|------|------|
-| `rollout_*/log_probs.npy` | Megatron 重算 logprobs，`[total_tokens]` float32 |
-| `rollout_*/rollout_log_probs.npy` | SGLang 生成时 logprobs，`[total_tokens]` float32 |
-| `tensor_cmp/fwd_only/*.pt` | Megatron log-prob pass 每层 mlp.output（dumper 产生） |
-| `tensor_cmp/engines/engine_0/*.pt` | SGLang inference 每层 mlp.output（dumper 产生） |
+| 文件                                 | 作用                                                  |
+| ------------------------------------ | ----------------------------------------------------- |
+| `rollout_*/log_probs.npy`          | Megatron 重算 logprobs，`[total_tokens]` float32    |
+| `rollout_*/rollout_log_probs.npy`  | SGLang 生成时 logprobs，`[total_tokens]` float32    |
+| `tensor_cmp/fwd_only/*.pt`         | Megatron log-prob pass 每层 mlp.output（dumper 产生） |
+| `tensor_cmp/engines/engine_0/*.pt` | SGLang inference 每层 mlp.output（dumper 产生）       |
 
 logprob 文件由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制产生；tensor_cmp 文件由 `DUMPER_ENABLE=True` 产生。
 
@@ -181,13 +180,13 @@ python tools/true-on-policy/compute_metrics.py \
 
 所有 rollout 按序 concat 后统一计算：
 
-| 指标 | 公式 |
-|------|------|
-| Pearson r | `dot(a-ā, b-b̄) / sqrt(‖a-ā‖²·‖b-b̄‖²)`，float64；理论值 1.0 |
-| MSE | `mean((log_probs - rollout_log_probs)²)` |
-| mean/max/p99 \|diff\| | 逐 token 绝对差统计 |
-| per-layer mean L2 | 每层 `[total_tokens, hidden_dim]` 按 token 算 L2 norm 后取均值 |
-| Cumulative MSE | `mean(per_layer_mean_L2²)` |
+| 指标                 | 公式                                                                      |
+| -------------------- | ------------------------------------------------------------------------- |
+| Pearson r            | `dot(a-ā, b-b̄) / sqrt(‖a-ā‖²·‖b-b̄‖²)`，float64；理论值 1.0 |
+| MSE                  | `mean((log_probs - rollout_log_probs)²)`                               |
+| mean/max/p99\|diff\| | 逐 token 绝对差统计                                                       |
+| per-layer mean L2    | 每层`[total_tokens, hidden_dim]` 按 token 算 L2 norm 后取均值           |
+| Cumulative MSE       | `mean(per_layer_mean_L2²)`                                             |
 
 **写入文件**
 

@@ -1,30 +1,21 @@
 """Compute true-on-policy match metrics from saved logprobs and hidden states.
 
-Two data sources are supported (mutually exclusive for logprob input):
+Mode is auto-detected from --save-dir:
 
-  Mode 1 — .npy files (default):
-    Reads rollout_*/log_probs.npy and rollout_*/rollout_log_probs.npy from --save-dir.
-    Produced by MILES_TRUE_ON_POLICY_SAVE_DIR mechanism in log_utils.py.
+  Mode 2 — dump_details (preferred, auto-detected):
+    Used when <save_dir>/dump_details/train_data/ exists.
+    Reads {rollout_id}_{rank}.pt, extracts log_probs and rollout_log_probs from RolloutBatch.
 
-  Mode 2 — dump_details .pt files (--dump-details):
-    Reads dump_details/train_data/{rollout_id}_{rank}.pt, extracts log_probs and
-    rollout_log_probs from the RolloutBatch stored there.
-    Produced when dump_details is enabled in the training run.
+  Mode 1 — .npy files (fallback):
+    Used when dump_details is absent.
+    Reads rollout_*/log_probs.npy and rollout_*/rollout_log_probs.npy.
 
-CSV output is always written to <save_dir>/metrics/match.csv regardless of mode.
+CSV output always written to <save_dir>/metrics/match.csv.
 
 Usage:
-    # Mode 1
     python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022
     python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --rollout 0
-
-    # Mode 2
-    python tools/true-on-policy/compute_metrics.py \\
-        --save-dir /root/true-on-policy/20260708_143022 \\
-        --dump-details /root/output/<run_id>/dump_details
-    python tools/true-on-policy/compute_metrics.py \\
-        --save-dir /root/true-on-policy/20260708_143022 \\
-        --dump-details /root/output/<run_id>/dump_details --rank 0 --rollout 0 1
+    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --rank 0
 """
 
 from __future__ import annotations
@@ -289,10 +280,6 @@ def main() -> None:
         help="Run directory (BASE_DIR/YYYYMMDD_HHMMSS/). Reads .npy files (Mode 1) and always writes metrics/match.csv.",
     )
     parser.add_argument(
-        "--dump-details", type=Path, default=None, metavar="PATH",
-        help="(Mode 2) Path to dump_details/ dir. Reads log_probs from train_data/{id}_{rank}.pt instead of .npy files.",
-    )
-    parser.add_argument(
         "--rank", type=int, default=0,
         help="Rank index for dump_details train_data files (default: 0).",
     )
@@ -307,10 +294,11 @@ def main() -> None:
     save_dir: Path = args.save_dir
     rollout_ids: list[int] | None = args.rollout
 
-    if args.dump_details is not None:
-        print(f"Loading logprobs from dump_details {args.dump_details} (rank={args.rank}) ...")
+    dump_details_dir = save_dir / "dump_details"
+    if (dump_details_dir / "train_data").exists():
+        print(f"Loading logprobs from dump_details (rank={args.rank}) ...")
         log_probs, rollout_log_probs = _load_logprobs_from_dump_details(
-            args.dump_details, args.rank, rollout_ids
+            dump_details_dir, args.rank, rollout_ids
         )
     else:
         print(f"Loading logprobs from {save_dir} ...")

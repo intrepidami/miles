@@ -142,9 +142,6 @@ def main() -> None:
 
     print(f"\nDone. Compute metrics:")
     print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir}")
-    if dump_details_src:
-        print(f"  # or with dump_details:")
-        print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir} --dump-details {save_dir}/dump_details")
 
 
 if __name__ == "__main__":
