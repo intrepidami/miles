@@ -29,7 +29,7 @@ title: True-On-Policy 实现细节
 | `--skip-train-step`        | 开启       | 不修改权重，可反复跑        |
 | `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
 
-注：`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
+注：`--true-on-policy-mode` **不再**是 match 模式的默认参数；它由 `run_megatron.py` 在 `extra_args` 中显式附加，使 `scripts/run_qwen3_4b.py match` 模式本身更通用。`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
 
 `build_launch_plan`（`miles/true_on_policy/config.py`）自动附加 `--recompute-logprobs-via-prefill`，rollout 结束后 SGLang 对完整序列做一次 prefill 重算，覆盖 decode 时的 logprobs。
 
@@ -138,6 +138,9 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 | `--dump-details PATH` | 可选 | Mode 2：`dump_details/` 目录，从 `train_data/*.pt` 读 logprobs |
 | `--rank INT` | 可选，默认 0 | Mode 2：读 `{rollout_id}_{rank}.pt` 中哪个 rank |
 | `--rollout INT...` | 可选，默认全部 | 指定 rollout ID，如 `--rollout 0 1` |
+| `--model-name STR` | 可选 | 写入 CSV 的模型名（如 `Qwen3-0.6B`） |
+| `--batch-size INT` | 可选 | rollout-batch-size，写入 CSV |
+| `--max-response-len INT` | 可选 | rollout-max-response-len，写入 CSV |
 | `--json` | flag | 额外打印 JSON |
 
 **Mode 1 — .npy（默认）**
@@ -194,8 +197,18 @@ python tools/true-on-policy/compute_metrics.py \
 追加到 `<save_dir>/metrics/match.csv`（首次写 header）：
 
 ```
-timestamp, num_tokens, pearson_r, mse, mean_abs_diff, max_abs_diff, p99_abs_diff
+timestamp, model_name, batch_size, max_response_len, num_tokens, pearson_r, mse, mean_abs_diff, max_abs_diff, p99_abs_diff
 ```
+
+`run_megatron.py` 运行结束后自动打印带 `--model-name / --batch-size / --max-response-len` 的完整命令。
+
+Hidden state 对比 CSV `metrics/train_rollout_hidden_states.csv`：
+
+```
+timestamp, layer_id, megatron_shape, sglang_shape, mse, mean_l2_diff, cosine_sim, mean_l2_megatron, mean_l2_sglang
+```
+
+shape 不匹配时 `mse` / `mean_l2_diff` 为空，`cosine_sim` / `mean_l2_megatron` / `mean_l2_sglang` 仍会计算（基于均值向量和每 token L2 norm，不需要逐 token 对齐）。
 
 ## 落盘文件结构与数据来源
 
