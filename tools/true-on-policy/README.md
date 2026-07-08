@@ -67,7 +67,7 @@ What each run does:
 - Samples 128 prompts from dapo-math-17k, generates up to 2048 tokens, runs 2 rollout steps
 - Skips backward pass and optimizer (`--skip-train-step`)
 - SGLang generates tokens and records `rollout_log_probs`
-- Megatron recomputes `log_probs` on the same tokens via `compute_log_prob` (`--get-mismatch-metrics`)
+- Megatron recomputes `log_probs` on the same tokens via `compute_log_prob`
 - Both arrays saved to `SAVE_DIR` as `.npy` files
 - If `CAPTURE_HIDDEN_STATES=True`: per-layer hidden states saved via `megatron_hs_hook.py`
 
