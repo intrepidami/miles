@@ -28,7 +28,7 @@ MODEL_DIR = "/root/models"
 DATA_DIR = "/root/datasets"
 OUTPUT_DIR = "/root/output"
 MEGATRON_PATH = "/root/Megatron-LM"
-SAVE_DIR = "/tmp/true-on-policy"
+SAVE_DIR = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True    # set False to skip megatron_hs_hook (saves memory)
 # ---------------------------------------------------------------------------
 
