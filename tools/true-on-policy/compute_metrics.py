@@ -125,6 +125,9 @@ def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
         layer_id = int(layer_m.group(1))
         step = int(step_m.group(1)) if step_m else 0
         t = torch.load(f, map_location="cpu", weights_only=False)
+        # unwrap tuple/list (e.g. Megatron MLP returns (output, bias))
+        while isinstance(t, (tuple, list)) and len(t) > 0:
+            t = t[0]
         if not isinstance(t, torch.Tensor):
             continue
         arr = t.float().detach().numpy()
