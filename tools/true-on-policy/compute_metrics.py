@@ -146,6 +146,7 @@ def _compare_hidden_states(save_dir: Path) -> None:
 
     Loads .pt files from tensor_cmp/fwd_only/ and tensor_cmp/engines/engine_0/.
     Tensors are grouped by layer_id and concatenated across steps in step order.
+    Results are printed and appended to metrics/train_rollout_hidden_states.csv.
 
     Note on ordering: Megatron processes full sequences in batch; SGLang uses
     autoregressive KV-cache decoding (prefill step=0 then one token per step).
@@ -178,16 +179,40 @@ def _compare_hidden_states(save_dir: Path) -> None:
     print(f"  Megatron layers: {sorted(megatron_hs)}  SGLang layers: {sorted(sglang_hs)}")
     print(f"  {'layer':>5}  {'megatron_shape':>22}  {'sglang_shape':>22}  {'mse':>12}  {'mean_L2_diff':>14}")
 
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    csv_fields = ["timestamp", "layer_id", "megatron_shape", "sglang_shape", "mse", "mean_l2_diff"]
+    csv_path = save_dir / "metrics" / "train_rollout_hidden_states.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not csv_path.exists()
+
+    rows = []
     for layer_id in common_layers:
         m = megatron_hs[layer_id].astype(np.float64)
         s = sglang_hs[layer_id].astype(np.float64)
         if m.shape != s.shape:
             print(f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  {'shape mismatch':>12}")
+            rows.append({
+                "timestamp": timestamp, "layer_id": layer_id,
+                "megatron_shape": str(m.shape), "sglang_shape": str(s.shape),
+                "mse": "", "mean_l2_diff": "",
+            })
             continue
         diff = m - s
         mse = float(np.mean(diff ** 2))
         mean_l2 = float(np.linalg.norm(diff, axis=-1).mean())
         print(f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  {mse:>12.4e}  {mean_l2:>14.4e}")
+        rows.append({
+            "timestamp": timestamp, "layer_id": layer_id,
+            "megatron_shape": str(m.shape), "sglang_shape": str(s.shape),
+            "mse": f"{mse:.6e}", "mean_l2_diff": f"{mean_l2:.6e}",
+        })
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_fields)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(rows)
+    print(f"  Hidden state comparison appended to {csv_path}")
 
 
 def main() -> None:
