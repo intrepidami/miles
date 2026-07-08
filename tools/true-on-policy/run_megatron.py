@@ -31,7 +31,7 @@ MEGATRON_PATH = "/root/Megatron-LM"
 SAVE_DIR = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True    # set False to skip megatron_hs_hook (saves memory)
 DUMPER_ENABLE = True            # enable SGLang dumper for rollout + Megatron log-prob pass
-DUMPER_DIR = "/root/code/true-on-policy/dumper"  # output dir for dumper tensors
+DUMPER_DIR = "/root/true-on-policy"  # output dir for dumper tensors
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -87,7 +87,7 @@ def main() -> None:
 
     # Tee stdout+stderr to a timestamped log file by re-execing under a guard.
     if not os.environ.get(_LOG_GUARD):
-        log_dir = _REPO_ROOT / "log"
+        log_dir = Path("/root/log")
         log_dir.mkdir(exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_path = log_dir / f"train_{timestamp}.txt"
