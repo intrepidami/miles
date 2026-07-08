@@ -107,10 +107,9 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy -
 
 输出：
 
-- Pearson r（logprobs 全局相关，理论值 1.0）
-- MSE、mean/max/p99 |diff|
-- per-layer mean L2 norm（有 hidden states 时）
-- Cumulative MSE
+- `=== Logprob match ===`：Pearson r（理论值 1.0）、MSE、mean/max/p99 |diff|
+- per-layer mean L2 norm（有 hidden states 时）、Cumulative MSE
+- 结果自动追加到 `<save_dir>/metrics/match.csv`（首次运行写 header）
 
 ## 落盘文件结构与数据来源
 

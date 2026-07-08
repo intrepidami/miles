@@ -84,7 +84,7 @@ Loading logprobs from /root/true-on-policy ...
   log_probs shape:         (262144,)
   rollout_log_probs shape: (262144,)
 
-=== Logprob consistency ===
+=== Logprob match ===
   tokens:        262144
   Pearson r:     1.000000
   MSE:           0.000000e+00

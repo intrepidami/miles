@@ -41,12 +41,14 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-pol
 ## 预期输出
 
 ```
-=== Logprob consistency ===
+=== Logprob match ===
   tokens:        262144
   Pearson r:     1.000000
   MSE:           0.000000e+00
   mean |diff|:   0.000000e+00
 ```
+
+结果追加到 `/root/true-on-policy/metrics/match.csv`。
 
 偏差 → logprob 不一致，用 per-layer hidden state 定位（见 implementation.md）。
 
