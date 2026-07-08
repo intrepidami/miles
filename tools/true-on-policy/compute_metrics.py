@@ -32,6 +32,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -99,30 +101,93 @@ def _pearson(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a_c, b_c) / denom) if denom > 0 else float("nan")
 
 
-def _load_megatron_hs(save_dir: Path) -> dict[int, np.ndarray] | None:
-    """Load per-layer hidden states from rank_0 (PP=1 assumed)."""
-    hs_dir = save_dir / "megatron_hs" / "rank_0"
-    if not hs_dir.exists():
+def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
+    """Load dumper .pt files from a directory, group by layer_id, concat across steps.
+
+    Returns dict: layer_id -> [total_tokens, hidden_dim] float32, or None if empty.
+    Steps are sorted numerically before concat so token order is preserved.
+    Tensors with ndim > 2 are flattened to [N, hidden_dim].
+    """
+    import torch
+
+    if not dump_dir.exists():
         return None
-    layers = {}
-    for f in sorted(hs_dir.glob("layer_*.npy")):
-        idx = int(f.stem.split("_")[1])
-        layers[idx] = np.load(f)  # [total_tokens, hidden_dim]
-    return layers if layers else None
+    files = sorted(dump_dir.glob("*.pt"))
+    if not files:
+        return None
+
+    grouped: dict[int, list[tuple[int, np.ndarray]]] = defaultdict(list)
+    for f in files:
+        layer_m = re.search(r"layer_id=(\d+)", f.stem)
+        step_m = re.search(r"step=(\d+)", f.stem)
+        if not layer_m:
+            continue
+        layer_id = int(layer_m.group(1))
+        step = int(step_m.group(1)) if step_m else 0
+        t = torch.load(f, map_location="cpu", weights_only=False)
+        if not isinstance(t, torch.Tensor):
+            continue
+        arr = t.float().detach().numpy()
+        if arr.ndim > 2:
+            arr = arr.reshape(-1, arr.shape[-1])
+        grouped[layer_id].append((step, arr))
+
+    if not grouped:
+        return None
+
+    return {
+        layer_id: np.concatenate([a for _, a in sorted(steps)], axis=0)
+        for layer_id, steps in grouped.items()
+    }
 
 
-def _compute_hs_metrics(layers: dict[int, np.ndarray]) -> None:
-    """Print per-layer L2 norm stats and cumulative MSE (self-consistency check)."""
-    print("\nMegatron hidden-state per-layer L2 norm (mean across tokens):")
-    norms = []
-    for idx in sorted(layers):
-        arr = layers[idx].astype(np.float64)
-        norm = float(np.linalg.norm(arr, axis=-1).mean())
-        norms.append((idx, norm))
-        print(f"  layer {idx:3d}: mean_L2={norm:.4f}  shape={arr.shape}")
+def _compare_hidden_states(save_dir: Path) -> None:
+    """Compare Megatron fwd_only vs SGLang inference per-layer hidden states.
 
-    cumulative_mse = float(np.mean([(n**2) for _, n in norms]))
-    print(f"\nCumulative MSE (mean of squared L2 norms): {cumulative_mse:.6f}")
+    Loads .pt files from tensor_cmp/fwd_only/ and tensor_cmp/engines/engine_0/.
+    Tensors are grouped by layer_id and concatenated across steps in step order.
+
+    Note on ordering: Megatron processes full sequences in batch; SGLang uses
+    autoregressive KV-cache decoding (prefill step=0 then one token per step).
+    After concat both have the same total token count, but token ORDER may differ
+    if sequence lengths vary. MSE is meaningful only when shapes AND ordering match.
+    """
+    megatron_dir = save_dir / "tensor_cmp" / "fwd_only"
+    sglang_dir = save_dir / "tensor_cmp" / "engines" / "engine_0"
+
+    if not megatron_dir.exists() and not sglang_dir.exists():
+        return
+
+    print("\n=== Hidden state comparison (tensor_cmp) ===")
+
+    megatron_hs = _load_dumper_tensors(megatron_dir)
+    sglang_hs = _load_dumper_tensors(sglang_dir)
+
+    if megatron_hs is None:
+        print(f"  No Megatron tensors in {megatron_dir}")
+        return
+    if sglang_hs is None:
+        print(f"  No SGLang tensors in {sglang_dir}")
+        return
+
+    common_layers = sorted(set(megatron_hs) & set(sglang_hs))
+    if not common_layers:
+        print("  No common layer_ids between Megatron and SGLang.")
+        return
+
+    print(f"  Megatron layers: {sorted(megatron_hs)}  SGLang layers: {sorted(sglang_hs)}")
+    print(f"  {'layer':>5}  {'megatron_shape':>22}  {'sglang_shape':>22}  {'mse':>12}  {'mean_L2_diff':>14}")
+
+    for layer_id in common_layers:
+        m = megatron_hs[layer_id].astype(np.float64)
+        s = sglang_hs[layer_id].astype(np.float64)
+        if m.shape != s.shape:
+            print(f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  {'shape mismatch':>12}")
+            continue
+        diff = m - s
+        mse = float(np.mean(diff ** 2))
+        mean_l2 = float(np.linalg.norm(diff, axis=-1).mean())
+        print(f"  {layer_id:>5}  {str(m.shape):>22}  {str(s.shape):>22}  {mse:>12.4e}  {mean_l2:>14.4e}")
 
 
 def main() -> None:
@@ -179,12 +244,7 @@ def main() -> None:
     print(f"  max  |diff|:   {abs_diff.max():.6e}")
     print(f"  p99  |diff|:   {np.percentile(abs_diff, 99):.6e}")
 
-    megatron_hs = _load_megatron_hs(save_dir)
-    if megatron_hs:
-        print(f"\n=== Megatron hidden states ({len(megatron_hs)} layers) ===")
-        _compute_hs_metrics(megatron_hs)
-    else:
-        print("\nNo Megatron hidden states found (run with --custom-megatron-before-log-prob-hook-path to enable).")
+    _compare_hidden_states(save_dir)
 
     csv_row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
