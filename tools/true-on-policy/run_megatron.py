@@ -30,6 +30,8 @@ OUTPUT_DIR = "/root/output"
 MEGATRON_PATH = "/root/Megatron-LM"
 SAVE_DIR = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True    # set False to skip megatron_hs_hook (saves memory)
+DUMPER_ENABLE = True            # enable SGLang dumper for rollout + Megatron log-prob pass
+DUMPER_DIR = "/root/code/true-on-policy/dumper"  # output dir for dumper tensors
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -44,6 +46,13 @@ def _build_args(num_gpus_per_node: int | None = None, num_nodes: int | None = No
     extra = ""
     if CAPTURE_HIDDEN_STATES:
         extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
+    if DUMPER_ENABLE:
+        extra += (
+            f"--dumper-enable "
+            f"--dumper-dir {DUMPER_DIR} "
+            f"--dumper-fwd-only enable=true "
+            f"--dumper-inference enable=true "
+        )
 
     kwargs: dict = dict(
         mode="match",
