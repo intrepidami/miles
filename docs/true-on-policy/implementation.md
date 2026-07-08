@@ -48,7 +48,24 @@ OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
 SAVE_DIR          = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True
+DUMPER_ENABLE     = True        # SGLang dumper：捕获 rollout + log-prob pass 所有张量
+DUMPER_DIR        = "/root/code/true-on-policy/dumper"
 ```
+
+`DUMPER_ENABLE=True` 时自动附加：
+- `--dumper-enable --dumper-dir $DUMPER_DIR`
+- `--dumper-fwd-only enable=true`：捕获 Megatron log-prob pass 张量
+- `--dumper-inference enable=true`：捕获 SGLang rollout 张量
+
+输出目录结构（验证阶段，尚未加 filter）：
+```
+$DUMPER_DIR/
+  fwd_only/      # Megatron log-prob pass 张量（含每层 hidden states）
+  engines/
+    engine_0/    # SGLang rollout 张量
+```
+
+**注意**：首次运行不加 `filter`，捕获全部张量以确认 tensor 名。确认后加 `filter=<name>` 缩小范围。
 
 CLI 参数：
 
