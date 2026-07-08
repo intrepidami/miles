@@ -242,29 +242,25 @@ def _plot_logprob_scatter(
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    # subsample for scatter readability
-    n = len(log_probs)
-    idx = np.random.default_rng(0).choice(n, size=min(n, 10000), replace=False)
-    lp, rlp = log_probs[idx], rollout_log_probs[idx]
-    probs = np.exp(lp.astype(np.float64))
-    rollout_probs = np.exp(rlp.astype(np.float64))
+    probs = np.exp(log_probs.astype(np.float64))
+    rollout_probs = np.exp(rollout_log_probs.astype(np.float64))
 
     # --- leftmost: probs scatter ---
     ax0 = axes[0]
-    ax0.scatter(rollout_probs, probs, s=4, alpha=0.3, linewidths=0)
+    ax0.scatter(rollout_probs, probs, s=1, alpha=0.1, linewidths=0)
     lo0 = min(probs.min(), rollout_probs.min())
     hi0 = max(probs.max(), rollout_probs.max())
     ax0.plot([lo0, hi0], [lo0, hi0], "r--", linewidth=1, label="y = x")
     ax0.set_xlabel("rollout_probs (SGLang)")
     ax0.set_ylabel("probs (Megatron)")
-    ax0.set_title(f"Prob scatter  (n={len(idx):,} sampled)")
+    ax0.set_title("Prob scatter")
     ax0.legend(fontsize=8)
 
     # --- middle: logprob scatter ---
     ax = axes[1]
-    ax.scatter(rlp, lp, s=4, alpha=0.3, linewidths=0)
-    lo = min(lp.min(), rlp.min())
-    hi = max(lp.max(), rlp.max())
+    ax.scatter(rollout_log_probs, log_probs, s=1, alpha=0.1, linewidths=0)
+    lo = min(log_probs.min(), rollout_log_probs.min())
+    hi = max(log_probs.max(), rollout_log_probs.max())
     ax.plot([lo, hi], [lo, hi], "r--", linewidth=1, label="y = x")
     ax.set_xlabel("rollout_log_probs (SGLang)")
     ax.set_ylabel("log_probs (Megatron)")
