@@ -33,7 +33,7 @@ vim tools/true-on-policy/run_megatron.py
 python tools/true-on-policy/run_megatron.py --cuda-visible-devices 5 --skip-prepare
 
 # 5. 分析结果
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
+python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy
 ```
 
 输出自动保存到 `log/train_YYYYMMDD_HHMMSS.txt`。

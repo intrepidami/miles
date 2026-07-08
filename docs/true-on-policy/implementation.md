@@ -23,7 +23,7 @@ title: True-On-Policy 实现细节
 | `rollout-batch-size` | 128 | 足够样本量 |
 | `n-samples-per-prompt` | 1 | - |
 | `rollout-max-response-len` | 2048 | - |
-| `num-rollout` | 2 | 两步验证 |
+| `num-rollout` | 1 | 单步验证 |
 | `global-batch-size` | 128 | - |
 | `rollout-shuffle` | 关闭 | 保证可复现 |
 | `rollout-seed` | 42（默认） | 确定性采样 |
@@ -46,7 +46,7 @@ MODEL_DIR         = "/root/models"
 DATA_DIR          = "/root/datasets"
 OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
-SAVE_DIR          = "/tmp/true-on-policy"
+SAVE_DIR          = "/root/code/true-on-policy"
 CAPTURE_HIDDEN_STATES = True
 ```
 
@@ -72,9 +72,9 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 ### `tools/true-on-policy/compute_metrics.py`
 
 ```bash
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy --rollout 0
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy --json
+python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy
+python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy --rollout 0
+python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy --json
 ```
 
 输出：
