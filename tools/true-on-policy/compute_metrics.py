@@ -1,20 +1,30 @@
 """Compute true-on-policy match metrics from saved logprobs and hidden states.
 
-Reads output from a pipeline run with:
-    MILES_TRUE_ON_POLICY_SAVE_DIR=<save_dir>
-    --true-on-policy-mode (or --get-mismatch-metrics)
-    --custom-megatron-before-log-prob-hook-path tools/true-on-policy/megatron_hs_hook.py:register
+Two data sources are supported (mutually exclusive for logprob input):
+
+  Mode 1 — .npy files (default):
+    Reads rollout_*/log_probs.npy and rollout_*/rollout_log_probs.npy from --save-dir.
+    Produced by MILES_TRUE_ON_POLICY_SAVE_DIR mechanism in log_utils.py.
+
+  Mode 2 — dump_details .pt files (--dump-details):
+    Reads dump_details/train_data/{rollout_id}_{rank}.pt, extracts log_probs and
+    rollout_log_probs from the RolloutBatch stored there.
+    Produced when dump_details is enabled in the training run.
+
+CSV output is always written to <save_dir>/metrics/match.csv regardless of mode.
 
 Usage:
-    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy
-    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --rollout 0
+    # Mode 1
+    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022
+    python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --rollout 0
 
-Metrics computed:
-    - Pearson correlation of log_probs vs rollout_log_probs (per token)
-    - Per-layer MSE of Megatron hidden states across rollouts (if available)
-    - Cumulative MSE across layers
-
-Results are appended to <save_dir>/metrics/match.csv.
+    # Mode 2
+    python tools/true-on-policy/compute_metrics.py \\
+        --save-dir /root/true-on-policy/20260708_143022 \\
+        --dump-details /root/output/<run_id>/dump_details
+    python tools/true-on-policy/compute_metrics.py \\
+        --save-dir /root/true-on-policy/20260708_143022 \\
+        --dump-details /root/output/<run_id>/dump_details --rank 0 --rollout 0 1
 """
 
 from __future__ import annotations
@@ -26,6 +36,39 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+
+
+def _load_logprobs_from_dump_details(
+    dump_details_dir: Path, rank: int, rollout_ids: list[int] | None
+) -> tuple[np.ndarray, np.ndarray]:
+    import torch
+
+    train_data_dir = dump_details_dir / "train_data"
+    if rollout_ids is not None:
+        files = sorted(train_data_dir / f"{r}_{rank}.pt" for r in rollout_ids)
+    else:
+        files = sorted(train_data_dir.glob(f"*_{rank}.pt"))
+
+    if not files:
+        raise FileNotFoundError(f"No train_data files for rank={rank} in {train_data_dir}")
+
+    lp_parts, rlp_parts = [], []
+    for f in files:
+        data = torch.load(f, map_location="cpu", weights_only=False)
+        rb = data["rollout_data"]
+        for key, parts in [("log_probs", lp_parts), ("rollout_log_probs", rlp_parts)]:
+            val = rb.get(key) if hasattr(rb, "get") else getattr(rb, key, None)
+            if val is None:
+                print(f"  skip {f.name}: missing {key}")
+                break
+            if isinstance(val, (list, tuple)) and val:
+                parts.append(torch.cat(val).float().numpy())
+            else:
+                parts.append(val.float().numpy())
+
+    if not lp_parts:
+        raise FileNotFoundError(f"No valid train_data entries in {train_data_dir}")
+    return np.concatenate(lp_parts), np.concatenate(rlp_parts)
 
 
 def _load_logprobs(save_dir: Path, rollout_ids: list[int] | None) -> tuple[np.ndarray, np.ndarray]:
@@ -83,17 +126,40 @@ def _compute_hs_metrics(layers: dict[int, np.ndarray]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--save-dir", type=Path, required=True)
-    parser.add_argument("--rollout", type=int, nargs="*", default=None, help="Rollout IDs to load (default: all)")
-    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser = argparse.ArgumentParser(
+        description="Compute true-on-policy logprob match metrics.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--save-dir", type=Path, required=True,
+        help="Run directory (BASE_DIR/YYYYMMDD_HHMMSS/). Reads .npy files (Mode 1) and always writes metrics/match.csv.",
+    )
+    parser.add_argument(
+        "--dump-details", type=Path, default=None, metavar="PATH",
+        help="(Mode 2) Path to dump_details/ dir. Reads log_probs from train_data/{id}_{rank}.pt instead of .npy files.",
+    )
+    parser.add_argument(
+        "--rank", type=int, default=0,
+        help="Rank index for dump_details train_data files (default: 0).",
+    )
+    parser.add_argument(
+        "--rollout", type=int, nargs="*", default=None,
+        help="Rollout IDs to include (default: all). Example: --rollout 0 1",
+    )
+    parser.add_argument("--json", action="store_true", help="Also print JSON output.")
     args = parser.parse_args()
 
     save_dir: Path = args.save_dir
     rollout_ids: list[int] | None = args.rollout
 
-    print(f"Loading logprobs from {save_dir} ...")
-    log_probs, rollout_log_probs = _load_logprobs(save_dir, rollout_ids)
+    if args.dump_details is not None:
+        print(f"Loading logprobs from dump_details {args.dump_details} (rank={args.rank}) ...")
+        log_probs, rollout_log_probs = _load_logprobs_from_dump_details(
+            args.dump_details, args.rank, rollout_ids
+        )
+    else:
+        print(f"Loading logprobs from {save_dir} ...")
+        log_probs, rollout_log_probs = _load_logprobs(save_dir, rollout_ids)
     print(f"  log_probs shape:         {log_probs.shape}")
     print(f"  rollout_log_probs shape: {rollout_log_probs.shape}")
 
