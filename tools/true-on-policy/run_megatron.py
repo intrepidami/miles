@@ -42,7 +42,7 @@ def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_node
     sys.path.insert(0, str(_REPO_ROOT))
     from scripts.run_qwen3_4b import ScriptArgs
 
-    extra = "--true-on-policy-mode "
+    extra = ""
     if CAPTURE_HIDDEN_STATES:
         extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
     if DUMPER_ENABLE:
