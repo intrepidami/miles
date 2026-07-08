@@ -100,35 +100,63 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 
 ### `tools/true-on-policy/compute_metrics.py`
 
+支持两种数据来源（logprob 输入互斥，CSV 始终写 `<save_dir>/metrics/match.csv`）。
+
+**参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `--save-dir PATH` | 必填 | 运行目录（`BASE_DIR/YYYYMMDD_HHMMSS/`）；Mode 1 读 `.npy`，始终写 CSV |
+| `--dump-details PATH` | 可选 | Mode 2：`dump_details/` 目录，从 `train_data/*.pt` 读 logprobs |
+| `--rank INT` | 可选，默认 0 | Mode 2：读 `{rollout_id}_{rank}.pt` 中哪个 rank |
+| `--rollout INT...` | 可选，默认全部 | 指定 rollout ID，如 `--rollout 0 1` |
+| `--json` | flag | 额外打印 JSON |
+
+**Mode 1 — .npy（默认）**
+
 ```bash
 python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022
 python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --rollout 0
-python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/20260708_143022 --json
 ```
 
-**读取文件**
+读取文件：
 
 | 文件 | 作用 |
 |------|------|
-| `rollout_*/log_probs.npy` | Megatron 重算 logprobs，shape `[total_tokens]` float32 |
-| `rollout_*/rollout_log_probs.npy` | SGLang 生成时 logprobs，shape `[total_tokens]` float32 |
-| `megatron_hs/rank_0/layer_NNN.npy` | Megatron 每层 hidden states，shape `[total_tokens, hidden_dim]` float32（可选） |
+| `rollout_*/log_probs.npy` | Megatron 重算 logprobs，`[total_tokens]` float32 |
+| `rollout_*/rollout_log_probs.npy` | SGLang 生成时 logprobs，`[total_tokens]` float32 |
+| `megatron_hs/rank_0/layer_NNN.npy` | Megatron 每层 hidden states，`[total_tokens, hidden_dim]` float32（可选） |
 
-所有 `rollout_*` 目录按序 concat 后统一计算（`--rollout N` 只选特定 rollout）。
+由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制（`log_utils.py:_maybe_save_logprobs()`）产生。
+
+**Mode 2 — dump_details .pt**
+
+```bash
+python tools/true-on-policy/compute_metrics.py \
+    --save-dir /root/true-on-policy/20260708_143022 \
+    --dump-details /root/output/<run_id>/dump_details
+python tools/true-on-policy/compute_metrics.py \
+    --save-dir /root/true-on-policy/20260708_143022 \
+    --dump-details /root/output/<run_id>/dump_details --rank 0 --rollout 0 1
+```
+
+读取 `dump_details/train_data/{rollout_id}_{rank}.pt`，从 `RolloutBatch` 中提取 `log_probs` 和 `rollout_log_probs`（list of tensors → concat）。由 dump_details 开关产生，需 Miles 可 import。
 
 **计算原理**
 
-| 指标 | 公式 / 方法 |
-|------|-------------|
-| Pearson r | `dot(a-ā, b-b̄) / sqrt(‖a-ā‖² · ‖b-b̄‖²)`，float64 精度；理论值 1.0 |
+所有 rollout 按序 concat 后统一计算：
+
+| 指标 | 公式 |
+|------|------|
+| Pearson r | `dot(a-ā, b-b̄) / sqrt(‖a-ā‖²·‖b-b̄‖²)`，float64；理论值 1.0 |
 | MSE | `mean((log_probs - rollout_log_probs)²)` |
-| mean/max/p99 \|diff\| | 逐 token 绝对差的均值、最大值、99 分位数 |
-| per-layer mean L2 | 对每层 `[total_tokens, hidden_dim]` 按 token 算 L2 norm 后取均值 |
-| Cumulative MSE | `mean(per_layer_mean_L2²)`，衡量各层 hidden state 整体量级 |
+| mean/max/p99 \|diff\| | 逐 token 绝对差统计 |
+| per-layer mean L2 | 每层 `[total_tokens, hidden_dim]` 按 token 算 L2 norm 后取均值 |
+| Cumulative MSE | `mean(per_layer_mean_L2²)` |
 
 **写入文件**
 
-结果自动追加到 `<save_dir>/metrics/match.csv`（首次运行写 header），列：
+追加到 `<save_dir>/metrics/match.csv`（首次写 header）：
 
 ```
 timestamp, num_tokens, pearson_r, mse, mean_abs_diff, max_abs_diff, p99_abs_diff
@@ -154,11 +182,11 @@ tensor_cmp/
   engines/engine_0/       # SGLang inference 每层 hidden states
 ```
 
-| 文件 | 生产者 | 调用链 |
-|------|--------|--------|
-| `rollout_*/log_probs.npy` | `log_utils.py:_maybe_save_logprobs()` | `actor.py:train()` → `log_rollout_data()` → `_maybe_save_logprobs()`，由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 触发 |
-| `rollout_*/rollout_log_probs.npy` | 同上 | 同上 |
-| `megatron_hs/rank_0/layer_NNN.npy` | `megatron_hs_hook.py:register()` | `model.py:compute_log_probs()` 前调用，`atexit` 写盘，由 `--custom-megatron-before-log-prob-hook-path` 注入 |
+| 文件                                 | 生产者                                  | 调用链                                                                                                                  |
+| ------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `rollout_*/log_probs.npy`          | `log_utils.py:_maybe_save_logprobs()` | `actor.py:train()` → `log_rollout_data()` → `_maybe_save_logprobs()`，由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 触发 |
+| `rollout_*/rollout_log_probs.npy`  | 同上                                    | 同上                                                                                                                    |
+| `megatron_hs/rank_0/layer_NNN.npy` | `megatron_hs_hook.py:register()`      | `model.py:compute_log_probs()` 前调用，`atexit` 写盘，由 `--custom-megatron-before-log-prob-hook-path` 注入       |
 
 只有 TP rank=0、PP last stage 写文件。
 
@@ -171,10 +199,10 @@ dump_details/
   train_data/{rollout_id}_{rank}.pt  # {rollout_id, rank, rollout_data: RolloutBatch}
 ```
 
-| 文件 | 生产者 | 调用链 |
-|------|--------|--------|
-| `rollout_data/*.pt` | `debug_data.py:save_debug_rollout_data()` | `rollout_manager.py:rollout()` 完成后，含每条 Sample 的 `rollout_log_probs`、tokens、rewards 等 |
-| `train_data/*.pt` | `train_dump_utils.py:save_debug_train_data()` | `actor.py:train()` 末尾，含完整 `RolloutBatch`（同时有 `log_probs` 和 `rollout_log_probs`），可直接对比两者 |
+| 文件                  | 生产者                                          | 调用链                                                                                                              |
+| --------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `rollout_data/*.pt` | `debug_data.py:save_debug_rollout_data()`     | `rollout_manager.py:rollout()` 完成后，含每条 Sample 的 `rollout_log_probs`、tokens、rewards 等                 |
+| `train_data/*.pt`   | `train_dump_utils.py:save_debug_train_data()` | `actor.py:train()` 末尾，含完整 `RolloutBatch`（同时有 `log_probs` 和 `rollout_log_probs`），可直接对比两者 |
 
 ### `tensor_cmp/`（位于运行目录下，由运行时推导）
 
@@ -183,10 +211,10 @@ fwd_only/                 # Megatron log-prob pass 每层 hidden states（重算
 engines/engine_0/         # SGLang inference 每层 hidden states（生成时）
 ```
 
-| 目录 | 生产者 | 调用链 |
-|------|--------|--------|
-| `fwd_only/` | `dumper_utils.py:DumperMegatronUtil(FWD_ONLY)` | `model.py:compute_log_probs()` 中 `DumperMegatronUtil` 注入 PyTorch forward hook，`--dumper-fwd-only enable=true` 触发 |
-| `engines/engine_0/` | SGLang 内置 `sglang.srt.debug_utils.dumper` | `server_group.py` 启动时注入 `DUMPER_SERVER_PORT` 环境变量，`sglang_rollout.py:configure_sglang()` 通过 HTTP `/dumper/configure` 激活，`--dumper-inference enable=true` 触发 |
+| 目录                  | 生产者                                           | 调用链                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fwd_only/`         | `dumper_utils.py:DumperMegatronUtil(FWD_ONLY)` | `model.py:compute_log_probs()` 中 `DumperMegatronUtil` 注入 PyTorch forward hook，`--dumper-fwd-only enable=true` 触发                                                           |
+| `engines/engine_0/` | SGLang 内置`sglang.srt.debug_utils.dumper`     | `server_group.py` 启动时注入 `DUMPER_SERVER_PORT` 环境变量，`sglang_rollout.py:configure_sglang()` 通过 HTTP `/dumper/configure` 激活，`--dumper-inference enable=true` 触发 |
 
 ## 环境变量
 
