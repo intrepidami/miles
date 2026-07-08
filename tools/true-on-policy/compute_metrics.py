@@ -239,6 +239,46 @@ def _compare_hidden_states(save_dir: Path) -> None:
     print(f"  Written {csv_path}")
 
 
+def _plot_logprob_scatter(
+    log_probs: np.ndarray,
+    rollout_log_probs: np.ndarray,
+    pearson_r: float,
+    save_dir: Path,
+) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # --- left: hexbin scatter (rollout vs train) ---
+    ax = axes[0]
+    hb = ax.hexbin(rollout_log_probs, log_probs, gridsize=80, cmap="Blues", mincnt=1, bins="log")
+    fig.colorbar(hb, ax=ax, label="log10(count)")
+    lo = min(log_probs.min(), rollout_log_probs.min())
+    hi = max(log_probs.max(), rollout_log_probs.max())
+    ax.plot([lo, hi], [lo, hi], "r--", linewidth=1, label="y = x")
+    ax.set_xlabel("rollout_log_probs (SGLang)")
+    ax.set_ylabel("log_probs (Megatron)")
+    ax.set_title(f"Logprob scatter  Pearson r = {pearson_r:.6f}")
+    ax.legend(fontsize=8)
+
+    # --- right: histogram of |diff| ---
+    ax2 = axes[1]
+    abs_diff = np.abs(log_probs - rollout_log_probs)
+    ax2.hist(abs_diff, bins=100, log=True, color="steelblue", edgecolor="none")
+    ax2.set_xlabel("|log_probs − rollout_log_probs|")
+    ax2.set_ylabel("count (log scale)")
+    ax2.set_title(f"Abs diff  mean={abs_diff.mean():.2e}  p99={np.percentile(abs_diff, 99):.2e}")
+
+    fig.tight_layout()
+    out = save_dir / "metrics" / "logprob_scatter.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  Plot saved to {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compute true-on-policy logprob match metrics.",
@@ -261,6 +301,7 @@ def main() -> None:
         help="Rollout IDs to include (default: all). Example: --rollout 0 1",
     )
     parser.add_argument("--json", action="store_true", help="Also print JSON output.")
+    parser.add_argument("--plot", action="store_true", help="Save logprob scatter plot to metrics/logprob_scatter.png.")
     args = parser.parse_args()
 
     save_dir: Path = args.save_dir
@@ -294,6 +335,9 @@ def main() -> None:
     print(f"  p99  |diff|:   {np.percentile(abs_diff, 99):.6e}")
 
     _compare_hidden_states(save_dir)
+
+    if args.plot:
+        _plot_logprob_scatter(log_probs, rollout_log_probs, r, save_dir)
 
     csv_row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
