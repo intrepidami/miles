@@ -235,6 +235,7 @@ def _plot_logprob_scatter(
     rollout_log_probs: np.ndarray,
     pearson_r: float,
     save_dir: Path,
+    svg: bool = False,
 ) -> None:
     import matplotlib
     matplotlib.use("Agg")
@@ -276,9 +277,14 @@ def _plot_logprob_scatter(
     ax2.set_title(f"Abs diff  mean={abs_diff.mean():.2e}  p99={np.percentile(abs_diff, 99):.2e}")
 
     fig.tight_layout()
-    out = save_dir / "metrics" / "logprob_scatter.png"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    metrics_dir = save_dir / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    if svg:
+        out = metrics_dir / "logprob_scatter.svg"
+        fig.savefig(out, format="svg", bbox_inches="tight")
+    else:
+        out = metrics_dir / "logprob_scatter.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"  Plot saved to {out}")
 
@@ -305,6 +311,7 @@ def main() -> None:
     mode.add_argument("--metric", action="store_true", help="Compute metrics and write CSV only (default).")
     mode.add_argument("--plot", action="store_true", help="Generate logprob_scatter.png only.")
     mode.add_argument("--all", action="store_true", help="Compute metrics and generate plot.")
+    parser.add_argument("--svg", action="store_true", help="Save plot as SVG instead of PNG.")
     args = parser.parse_args()
 
     do_metric = args.metric or args.all or (not args.plot)
@@ -365,7 +372,7 @@ def main() -> None:
             print("\n" + json.dumps(csv_row, indent=2))
 
     if do_plot:
-        _plot_logprob_scatter(log_probs, rollout_log_probs, r, save_dir)
+        _plot_logprob_scatter(log_probs, rollout_log_probs, r, save_dir, svg=args.svg)
 
 
 if __name__ == "__main__":
