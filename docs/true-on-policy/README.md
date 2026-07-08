@@ -17,6 +17,7 @@ true-on-policy work.
 
 ## Files
 
+- `overview-zh.md` - 中文说明：实现了什么、怎么实现、有什么用（相比 main 的完整变更说明）。
 - `rules.md` - standing working rules for this investigation thread.
 - `candidate-scripts.md` - closest existing scripts for true-on-policy test work.
 - `worklog.md` - chronological summaries of investigations and decisions.
