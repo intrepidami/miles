@@ -123,7 +123,7 @@ def execute(args: ScriptArgs):
         "--apply-chat-template "
         # By default it is thinking mode
         # """--apply-chat-template-kwargs '{"enable_thinking":false}' """
-        "--rollout-shuffle "
+        f"{'--rollout-shuffle ' if not is_match else ''}"
         "--rm-type math "
         f"--num-rollout {2 if is_match else (debug_num_rollout if is_debug_one_sample else 3000)} "
         f"--rollout-batch-size {128 if is_match else (1 if is_debug_one_sample else 32)} "
