@@ -138,9 +138,6 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 | `--dump-details PATH` | 可选 | Mode 2：`dump_details/` 目录，从 `train_data/*.pt` 读 logprobs |
 | `--rank INT` | 可选，默认 0 | Mode 2：读 `{rollout_id}_{rank}.pt` 中哪个 rank |
 | `--rollout INT...` | 可选，默认全部 | 指定 rollout ID，如 `--rollout 0 1` |
-| `--model-name STR` | 可选 | 写入 CSV 的模型名（如 `Qwen3-0.6B`） |
-| `--batch-size INT` | 可选 | rollout-batch-size，写入 CSV |
-| `--max-response-len INT` | 可选 | rollout-max-response-len，写入 CSV |
 | `--json` | flag | 额外打印 JSON |
 
 **Mode 1 — .npy（默认）**
@@ -194,13 +191,11 @@ python tools/true-on-policy/compute_metrics.py \
 
 **写入文件**
 
-追加到 `<save_dir>/metrics/match.csv`（首次写 header）：
+写入 `<save_dir>/metrics/match.csv`（每次覆盖）：
 
 ```
-timestamp, model_name, batch_size, max_response_len, num_tokens, pearson_r, mse, mean_abs_diff, max_abs_diff, p99_abs_diff
+timestamp, num_tokens, pearson_r, mse, mean_abs_diff, max_abs_diff, p99_abs_diff
 ```
-
-`run_megatron.py` 运行结束后自动打印带 `--model-name / --batch-size / --max-response-len` 的完整命令。
 
 Hidden state 对比 CSV `metrics/train_rollout_hidden_states.csv`：
 
