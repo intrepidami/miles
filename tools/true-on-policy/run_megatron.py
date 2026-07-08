@@ -127,8 +127,21 @@ def main() -> None:
 
     execute(args)
 
+    # Move dump_details from OUTPUT_DIR/{run_id}/dump_details/ into the timestamped save_dir.
+    output_root = Path(OUTPUT_DIR)
+    run_dirs = sorted(output_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True) if output_root.exists() else []
+    dump_details_src = next((d / "dump_details" for d in run_dirs if (d / "dump_details").exists()), None)
+    if dump_details_src:
+        import shutil
+        dump_details_dst = save_dir / "dump_details"
+        shutil.move(str(dump_details_src), str(dump_details_dst))
+        print(f"Moved dump_details → {dump_details_dst}")
+
     print(f"\nDone. Compute metrics:")
     print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir}")
+    if dump_details_src:
+        print(f"  # or with dump_details:")
+        print(f"  python tools/true-on-policy/compute_metrics.py --save-dir {save_dir} --dump-details {save_dir}/dump_details")
 
 
 if __name__ == "__main__":
