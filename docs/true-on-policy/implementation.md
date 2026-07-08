@@ -45,15 +45,16 @@ MODEL_DIR         = "/root/models"
 DATA_DIR          = "/root/datasets"
 OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
-SAVE_DIR          = "/root/true-on-policy"
+BASE_DIR          = "/root/true-on-policy"   # 每次运行在 BASE_DIR/{YYYYMMDD_HHMMSS}/ 下存数据
 CAPTURE_HIDDEN_STATES = True
-DUMPER_ENABLE     = True        # SGLang dumper：捕获 rollout + log-prob pass 所有张量
-DUMPER_DIR        = "/root/true-on-policy/tensor_cmp"
+DUMPER_ENABLE     = True        # SGLang dumper：捕获 rollout + log-prob pass 张量
 ```
+
+`DUMPER_DIR` 由运行时自动推导为 `{BASE_DIR}/{timestamp}/tensor_cmp`，无需手动配置。
 
 `DUMPER_ENABLE=True` 时自动附加：
 
-- `--dumper-enable --dumper-dir $DUMPER_DIR`
+- `--dumper-enable --dumper-dir {run_dir}/tensor_cmp`
 - `--dumper-fwd-only enable=true non_intrusive_mode=all filter='<hidden_state_filter>'`
 - `--dumper-inference enable=true non_intrusive_mode=all filter='<hidden_state_filter>'`
 
@@ -113,7 +114,7 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy -
 
 ## 落盘文件结构与数据来源
 
-### `/root/true-on-policy/`（SAVE_DIR）
+### `/root/true-on-policy/{YYYYMMDD_HHMMSS}/`（每次运行一个目录）
 
 ```
 rollout_0000/
@@ -124,6 +125,11 @@ megatron_hs/
     layer_000.npy         # [total_tokens, hidden_dim] float32
     layer_001.npy
     ...
+metrics/
+  match.csv               # compute_metrics.py 输出，每次追加一行
+tensor_cmp/
+  fwd_only/               # Megatron log-prob pass 每层 hidden states
+  engines/engine_0/       # SGLang inference 每层 hidden states
 ```
 
 | 文件 | 生产者 | 调用链 |
@@ -148,7 +154,7 @@ dump_details/
 | `rollout_data/*.pt` | `debug_data.py:save_debug_rollout_data()` | `rollout_manager.py:rollout()` 完成后，含每条 Sample 的 `rollout_log_probs`、tokens、rewards 等 |
 | `train_data/*.pt` | `train_dump_utils.py:save_debug_train_data()` | `actor.py:train()` 末尾，含完整 `RolloutBatch`（同时有 `log_probs` 和 `rollout_log_probs`），可直接对比两者 |
 
-### `/root/true-on-policy/tensor_cmp/`（DUMPER_DIR）
+### `tensor_cmp/`（位于运行目录下，由运行时推导）
 
 ```
 fwd_only/                 # Megatron log-prob pass 每层 hidden states（重算时）
