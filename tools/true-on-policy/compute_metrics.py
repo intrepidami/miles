@@ -261,9 +261,6 @@ def main() -> None:
         help="Rollout IDs to include (default: all). Example: --rollout 0 1",
     )
     parser.add_argument("--json", action="store_true", help="Also print JSON output.")
-    parser.add_argument("--model-name", default="", help="Model name written to CSV (e.g. Qwen3-0.6B).")
-    parser.add_argument("--batch-size", type=int, default=None, help="rollout-batch-size written to CSV.")
-    parser.add_argument("--max-response-len", type=int, default=None, help="rollout-max-response-len written to CSV.")
     args = parser.parse_args()
 
     save_dir: Path = args.save_dir
@@ -300,9 +297,6 @@ def main() -> None:
 
     csv_row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "model_name": args.model_name,
-        "batch_size": "" if args.batch_size is None else str(args.batch_size),
-        "max_response_len": "" if args.max_response_len is None else str(args.max_response_len),
         "num_tokens": int(log_probs.size),
         "pearson_r": f"{r:.8f}",
         "mse": f"{mse:.6e}",
