@@ -4,11 +4,11 @@ Test that SGLang rollout logprobs match Megatron logprobs under `--true-on-polic
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `run_megatron.py` | Runner: wraps `scripts/run_qwen3_4b.py` in `match` mode |
-| `megatron_hs_hook.py` | Forward hook: captures per-layer Megatron hidden states |
-| `compute_metrics.py` | Offline analysis: Pearson r, MSE, per-layer L2 norms |
+| File                    | Purpose                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `run_megatron.py`     | Runner: wraps`scripts/run_qwen3_4b.py` in `match` mode |
+| `megatron_hs_hook.py` | Forward hook: captures per-layer Megatron hidden states    |
+| `compute_metrics.py`  | Offline analysis: Pearson r, MSE, per-layer L2 norms       |
 
 ## Setup
 
@@ -54,9 +54,10 @@ Override GPU selection and parallelism:
 
 ```bash
 python tools/true-on-policy/run_megatron.py \
-    --cuda-visible-devices 0,1,2,3 \
-    --num-gpus-per-node 4 \
-    --num-nodes 1
+    --cuda-visible-devices 5 \
+    --num-gpus-per-node 1 \
+    --num-nodes 1 \
+    --skip-prepare
 ```
 
 All output (stdout + stderr) is automatically tee'd to `log/train_YYYYMMDD_HHMMSS.txt` in the repo root.
@@ -73,7 +74,7 @@ What each run does:
 ## Analyze results
 
 ```bash
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
+python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy
 ```
 
 Expected output when logprobs match:
@@ -128,17 +129,17 @@ python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy --
 
 ## Source changes
 
-| File | Change |
-|------|--------|
-| `miles/utils/arguments.py` | Added `--skip-train-step` flag |
-| `miles/backends/megatron_utils/actor.py` | Guards `train()` call with `args.skip_train_step` |
+| File                                           | Change                                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `miles/utils/arguments.py`                   | Added`--skip-train-step` flag                                                          |
+| `miles/backends/megatron_utils/actor.py`     | Guards`train()` call with `args.skip_train_step`                                     |
 | `miles/backends/training_utils/log_utils.py` | `_maybe_save_logprobs()` writes `.npy` when `MILES_TRUE_ON_POLICY_SAVE_DIR` is set |
-| `scripts/run_qwen3_4b.py` | Added `match` mode |
+| `scripts/run_qwen3_4b.py`                    | Added`match` mode                                                                      |
 
 ## Env vars
 
-| Variable | Set by | Effect |
-|----------|--------|--------|
+| Variable                          | Set by                            | Effect                                |
+| --------------------------------- | --------------------------------- | ------------------------------------- |
 | `MILES_TRUE_ON_POLICY_SAVE_DIR` | `run_megatron.py` automatically | Enables logprob + hidden-state saving |
 
 ## Troubleshooting
