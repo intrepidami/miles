@@ -91,7 +91,7 @@ def main() -> None:
         save_dir = Path(BASE_DIR) / run_timestamp
         log_dir = save_dir / "log"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"train_{run_timestamp}.txt"
+        log_path = log_dir / f"log_{run_timestamp}.txt"
         print(f"Logging to {log_path}", flush=True)
         env = os.environ.copy()
         env[_LOG_GUARD] = "1"
