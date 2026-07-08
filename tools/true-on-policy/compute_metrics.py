@@ -276,9 +276,9 @@ def _plot_logprob_scatter(
     ax2.set_title(f"Abs diff  mean={abs_diff.mean():.2e}  p99={np.percentile(abs_diff, 99):.2e}")
 
     fig.tight_layout()
-    out = save_dir / "metrics" / "logprob_scatter.svg"
+    out = save_dir / "metrics" / "logprob_scatter.png"
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, format="svg")
+    fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"  Plot saved to {out}")
 
