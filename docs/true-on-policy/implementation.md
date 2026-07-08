@@ -1,34 +1,33 @@
 ---
 title: True-On-Policy 实现细节
 ---
-
 # 实现细节
 
 ## 源码改动
 
-| 文件 | 改动 |
-|------|------|
-| `miles/utils/arguments.py` | 新增 `--skip-train-step`：跳过 backward + optimizer，rollout 和 log-prob 前向仍正常执行 |
-| `miles/backends/megatron_utils/actor.py` | `train()` 调用受 `args.skip_train_step` 保护 |
-| `miles/backends/training_utils/log_utils.py` | 新增 `_maybe_save_logprobs()`：在 `log_rollout_data()` 入口，当 `MILES_TRUE_ON_POLICY_SAVE_DIR` 设置时落盘 logprobs |
-| `miles/utils/misc.py` | `load_function` 支持文件路径格式 `/path/file.py:func`（原来只支持 dot-notation） |
-| `scripts/run_qwen3_4b.py` | 新增 `match` 模式 |
+| 文件                                           | 改动                                                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `miles/utils/arguments.py`                   | 新增`--skip-train-step`：跳过 backward + optimizer，rollout 和 log-prob 前向仍正常执行                                 |
+| `miles/backends/megatron_utils/actor.py`     | `train()` 调用受 `args.skip_train_step` 保护                                                                         |
+| `miles/backends/training_utils/log_utils.py` | 新增`_maybe_save_logprobs()`：在 `log_rollout_data()` 入口，当 `MILES_TRUE_ON_POLICY_SAVE_DIR` 设置时落盘 logprobs |
+| `miles/utils/misc.py`                        | `load_function` 支持文件路径格式 `/path/file.py:func`（原来只支持 dot-notation）                                     |
+| `scripts/run_qwen3_4b.py`                    | 新增`match` 模式                                                                                                       |
 
 ## match 模式参数
 
 `mode="match"` 时 `scripts/run_qwen3_4b.py` 使用以下配置：
 
-| 参数 | 值 | 原因 |
-|------|----|------|
-| `rollout-batch-size` | 128 | 足够样本量 |
-| `n-samples-per-prompt` | 1 | - |
-| `rollout-max-response-len` | 2048 | - |
-| `num-rollout` | 1 | 单步验证 |
-| `global-batch-size` | 128 | - |
-| `rollout-shuffle` | 关闭 | 保证可复现 |
-| `rollout-seed` | 42（默认） | 确定性采样 |
-| `--skip-train-step` | 开启 | 不修改权重，可反复跑 |
-| `--true-on-policy-mode` | 开启 | 触发 Megatron 重算 logprobs |
+| 参数                         | 值         | 原因                        |
+| ---------------------------- | ---------- | --------------------------- |
+| `rollout-batch-size`       | 128        | 足够样本量                  |
+| `n-samples-per-prompt`     | 1          | -                           |
+| `rollout-max-response-len` | 2048       | -                           |
+| `num-rollout`              | 1          | 单步验证                    |
+| `global-batch-size`        | 128        | -                           |
+| `rollout-shuffle`          | 关闭       | 保证可复现                  |
+| `rollout-seed`             | 42（默认） | 确定性采样                  |
+| `--skip-train-step`        | 开启       | 不修改权重，可反复跑        |
+| `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
 
 注：`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
 
@@ -53,19 +52,29 @@ DUMPER_DIR        = "/root/code/true-on-policy/dumper"
 ```
 
 `DUMPER_ENABLE=True` 时自动附加：
-- `--dumper-enable --dumper-dir $DUMPER_DIR`
-- `--dumper-fwd-only enable=true`：捕获 Megatron log-prob pass 张量
-- `--dumper-inference enable=true`：捕获 SGLang rollout 张量
 
-输出目录结构（验证阶段，尚未加 filter）：
+- `--dumper-enable --dumper-dir $DUMPER_DIR`
+- `--dumper-fwd-only enable=true non_intrusive_mode=all filter='<hidden_state_filter>'`
+- `--dumper-inference enable=true non_intrusive_mode=all filter='<hidden_state_filter>'`
+
+filter 表达式（Python eval 对 tags dict）：
+
+```python
+"layer_id is not None and name is not None and 'output' in name"
+```
+
+只捕 transformer 层（`layers.N`）的输出张量，过滤掉输入和子模块中间值。
+
+tags 中 `layer_id` 由 SGLang dumper 对匹配 `layers.\d+` 的模块自动注入，`name` 形如 `non_intrusive__model.layers.0.output`。
+
+输出目录结构：
+
 ```
 $DUMPER_DIR/
-  fwd_only/      # Megatron log-prob pass 张量（含每层 hidden states）
+  fwd_only/      # Megatron log-prob pass 每层 hidden states
   engines/
-    engine_0/    # SGLang rollout 张量
+    engine_0/    # SGLang rollout 每层 hidden states
 ```
-
-**注意**：首次运行不加 `filter`，捕获全部张量以确认 tensor 名。确认后加 `filter=<name>` 缩小范围。
 
 CLI 参数：
 
@@ -95,6 +104,7 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-pol
 ```
 
 输出：
+
 - Pearson r（logprobs 全局相关，理论值 1.0）
 - MSE、mean/max/p99 |diff|
 - per-layer mean L2 norm（有 hidden states 时）
@@ -120,6 +130,6 @@ $SAVE_DIR/
 
 ## 环境变量
 
-| 变量 | 设置方 | 效果 |
-|------|--------|------|
+| 变量                              | 设置方                       | 效果                             |
+| --------------------------------- | ---------------------------- | -------------------------------- |
 | `MILES_TRUE_ON_POLICY_SAVE_DIR` | `run_megatron.py` 自动设置 | 触发 logprob + hidden state 落盘 |
