@@ -52,5 +52,6 @@ python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy
 
 ## 文件索引
 
+- `workflow.md` — AI 工作指南：从零上手、工作规则、已定决策
 - `implementation.md` — 源码改动、工具说明、参数参考
 - `code-map.md` — 相关代码位置
