@@ -42,7 +42,7 @@ function_registry = FunctionRegistry()
 def load_function(path):
     """
     Load a function from registry or module.
-    :param path: The path to the function, e.g. "module.submodule.function".
+    :param path: Dot-notation "module.submodule.function", or file path "/abs/path/file.py:function".
     :return: The function object.
     """
     if path is None:
@@ -51,6 +51,15 @@ def load_function(path):
     registered = function_registry.get(path)
     if registered is not None:
         return registered
+
+    # File path format: /path/to/file.py:func_name
+    if ":" in path and path.split(":", 1)[0].endswith(".py"):
+        file_path, func_name = path.split(":", 1)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_dyn_hook", file_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return getattr(module, func_name)
 
     module_path, _, attr = path.rpartition(".")
     module = importlib.import_module(module_path)
