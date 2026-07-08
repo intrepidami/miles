@@ -36,6 +36,7 @@ DUMPER_ENABLE = True                # enable SGLang dumper for rollout + Megatro
 _REPO_ROOT = Path(__file__).parents[2]
 _HOOK_PATH = f"{_REPO_ROOT}/tools/true-on-policy/megatron_hs_hook.py:register"
 _LOG_GUARD = "_MILES_TRUE_ON_POLICY_LOGGED"
+_RUN_TIMESTAMP_VAR = "_MILES_RUN_TIMESTAMP"
 
 
 def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_nodes: int | None = None):
@@ -84,15 +85,17 @@ def main() -> None:
     if cli.cuda_visible_devices is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = cli.cuda_visible_devices
 
-    # Tee stdout+stderr to a timestamped log file by re-execing under a guard.
+    # Tee stdout+stderr to a log file inside the timestamped run directory.
     if not os.environ.get(_LOG_GUARD):
-        log_dir = Path("/root/log")
-        log_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = log_dir / f"train_{timestamp}.txt"
+        run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_dir = Path(BASE_DIR) / run_timestamp
+        log_dir = save_dir / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"train_{run_timestamp}.txt"
         print(f"Logging to {log_path}", flush=True)
         env = os.environ.copy()
         env[_LOG_GUARD] = "1"
+        env[_RUN_TIMESTAMP_VAR] = run_timestamp
         with open(log_path, "wb") as lf:
             proc = subprocess.Popen(
                 [sys.executable] + sys.argv,
@@ -107,7 +110,7 @@ def main() -> None:
         sys.exit(proc.wait())
 
     # Timestamped run directory: BASE_DIR/{YYYYMMDD_HHMMSS}/
-    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_timestamp = os.environ.get(_RUN_TIMESTAMP_VAR) or datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = Path(BASE_DIR) / run_timestamp
     dumper_dir = save_dir / "tensor_cmp"
 
