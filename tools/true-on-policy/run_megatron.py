@@ -47,7 +47,7 @@ def _build_args(num_gpus_per_node: int | None = None, num_nodes: int | None = No
     if CAPTURE_HIDDEN_STATES:
         extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
     if DUMPER_ENABLE:
-        _dumper_filter = "layer_id is not None and name is not None and 'output' in name"
+        _dumper_filter = 'layer_id is not None and name is not None and "output" in name'
         extra += (
             f"--dumper-enable "
             f"--dumper-dir {DUMPER_DIR} "
