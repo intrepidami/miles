@@ -45,7 +45,7 @@ MODEL_DIR         = "/root/models"
 DATA_DIR          = "/root/datasets"
 OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
-SAVE_DIR          = "/root/code/true-on-policy"
+SAVE_DIR          = "/root/true-on-policy"
 CAPTURE_HIDDEN_STATES = True
 DUMPER_ENABLE     = True        # SGLang dumper：捕获 rollout + log-prob pass 所有张量
 DUMPER_DIR        = "/root/true-on-policy/tensor_cmp"
@@ -100,9 +100,9 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 ### `tools/true-on-policy/compute_metrics.py`
 
 ```bash
-python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy
-python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy --rollout 0
-python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy --json
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --rollout 0
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --json
 ```
 
 输出：

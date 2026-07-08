@@ -32,7 +32,7 @@ MODEL_DIR         = "/root/models"
 DATA_DIR          = "/root/datasets"
 OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
-SAVE_DIR          = "/tmp/true-on-policy"
+SAVE_DIR          = "/root/true-on-policy"
 CAPTURE_HIDDEN_STATES = True           # False to skip megatron_hs_hook (saves memory)
 ```
 
@@ -74,13 +74,13 @@ What each run does:
 ## Analyze results
 
 ```bash
-python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy
 ```
 
 Expected output when logprobs match:
 
 ```
-Loading logprobs from /tmp/true-on-policy ...
+Loading logprobs from /root/true-on-policy ...
   log_probs shape:         (262144,)
   rollout_log_probs shape: (262144,)
 
@@ -105,16 +105,16 @@ Additional flags:
 
 ```bash
 # JSON output
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy --json
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --json
 
 # Single rollout step only
-python tools/true-on-policy/compute_metrics.py --save-dir /tmp/true-on-policy --rollout 0
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy --rollout 0
 ```
 
 ## Saved file layout
 
 ```
-/tmp/true-on-policy/
+/root/true-on-policy/
   rollout_0000/
     log_probs.npy           # [total_tokens] float32 — Megatron recomputed logprobs
     rollout_log_probs.npy   # [total_tokens] float32 — SGLang original logprobs
