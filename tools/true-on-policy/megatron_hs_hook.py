@@ -37,11 +37,13 @@ def _save() -> None:
     hs_dir = Path(save_dir) / f"megatron_hs/rank_{rank}"
     hs_dir.mkdir(parents=True, exist_ok=True)
     for layer_idx, arrays in sorted(_store.items()):
-        # Each array: [seq_len, batch, hidden] (Megatron sequence-first)
-        # Stack microbatches along batch dim, then reshape to [total_tokens, hidden]
-        combined = np.concatenate(arrays, axis=1)  # [seq, total_batch, hidden]
-        seq, total_batch, hidden = combined.shape
-        token_first = combined.transpose(1, 0, 2).reshape(total_batch * seq, hidden)
+        # Each array: [seq_len, batch, hidden] (Megatron sequence-first).
+        # Transpose each microbatch to token-first before concatenating so
+        # microbatches with different seq_len (thd packed format) are supported;
+        # concatenating on the batch axis would require equal seq_len.
+        token_first = np.concatenate(
+            [a.transpose(1, 0, 2).reshape(-1, a.shape[2]) for a in arrays], axis=0
+        )
         np.save(hs_dir / f"layer_{layer_idx:03d}.npy", token_first)
     print(f"[megatron_hs_hook] Saved {len(_store)} layers → {hs_dir}", flush=True)
 
