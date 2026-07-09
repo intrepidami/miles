@@ -254,6 +254,15 @@ CLI 参数：
 - `fsdp_utils/actor.py`：`--skip-train-step` 生效（原来只有 megatron actor 支持），跳过 optimizer 循环但仍写 dump_details train data。
 - fsdp + `--true-on-policy` 时 `build_true_on_policy_launch_plan` 走 fsdp 分支：附加 `--attn-implementation`（contract 指定，Qwen3 为 flash_attention_3）+ SGLang 确定性参数，不附加 Megatron kernel 交换参数。参照 `examples/true_on_policy/run_simple.py`（fsdp 配置下 `train_rollout_logprob_abs_diff` 已验证严格为 0）。
 
+**FSDP 下的并行参数：不需要设 TP/PP/CP/DP**
+
+- DP 从来不是直接设的参数，是推导值：`DP = 总卡数 ÷ (TP × PP × CP)`。用户只控制总卡数和模型并行度。
+- FSDP backend 没有 TP/PP/CP 概念：`arguments.py` 硬 assert `context_parallel_size == 1`；FSDP 本质是数据并行 + 参数分片（每卡拿一份数据，权重切片存储、用时 allgather）。
+- 所以 fsdp 下 **DP = 卡数 = `--num-gpus-per-node`**，跑并行 2 只需 `--num-gpus-per-node 2`（配 `--cuda-visible-devices 4,5`）。
+- `ScriptArgs.__post_init__` 里的 `tensor_model_parallel_size` 等值只在 megatron 分支拼进命令行；fsdp 分支不使用（`actor_num_gpus_per_node = num_gpus_per_node`）。
+- 需要设 TP 的场景：megatron backend 多卡（Qwen3-4B 自动 TP=2/CP=4）；或 SGLang 推理侧多卡引擎（`rollout_num_gpus_per_engine > 1`，推理 TP，true-on-policy 下切到 `fsdp_tp` contract）。
+- DP=2 时注意：dump（`rollout_*/`、`dump_details train_data`）只含 rank 0 分片（64/128 样本），`compute_metrics.py --rank 0` 默认正确；另一半用 `--rank 1`。
+
 ### `tools/true-on-policy/megatron_hs_hook.py`
 
 通过 `--custom-megatron-before-log-prob-hook-path /path/megatron_hs_hook.py:register` 注入。
