@@ -139,7 +139,24 @@ MSE 降 4 个数量级，r 只从小数点后第 5 位挪到第 9 位——开�
 2. SGLang deterministic inference / fa3 静默回退（版本不支持时不报错）。
 3. kernel 交换覆盖不含 final norm / lm_head / logprob softmax 环节。
 
-**下一步**：用 token 对齐的逐层 hidden state 对比定位分歧起始层（2026-07-09 已按 `--micro-batch-size 1` 重跑，run 目录 `20260709_025156`；dumper 文件名格式实测为 `step=N___rank=R___dump_index=D___name=...___layer_id=L.pt`，`step` 每 microbatch 递增）。layer 0 即分歧 → attention/embedding 入口（嫌疑 1）；逐层递增 → kernel 相近不相同的累积误差；各层皆小但 logprob 差大 → 嫌疑 3。
+**下一步**：用 token 对齐的逐层 hidden state 对比定位分歧起始层（dumper 文件名格式实测为 `step=N___rank=R___dump_index=D___name=...___layer_id=L.pt`，`step` 每 microbatch 递增）。layer 0 即分歧 → attention/embedding 入口（嫌疑 1）；逐层递增 → kernel 相近不相同的累积误差；各层皆小但 logprob 差大 → 嫌疑 3。
+
+**2026-07-09 run `20260709_025156` 的发现**（该次为 baseline——`run_megatron.py` 默认 `true_on_policy=False`，指标与 07-08 baseline 一致）：
+
+1. Megatron thd microbatch 有尾部 padding（每样本 pad 到 128 的倍数，如 2243→2304）——对齐加载已改为裁剪（`compute_metrics.py`）。
+2. **baseline 下 SGLang dump 无 decode 数据**（全部仅 14188 prefill token）：CUDA graph 回放不触发 dumper 的 python hook。match 模式已加 `--sglang-disable-cuda-graph`（`run_qwen3_4b.py`）。07-08 true-on-policy 次能捕到 decode，因确定性推理禁用了 graph。
+3. SGLang prefill dump 少于 prompt 总数：radix cache 命中的前缀不重算不重 dump。对齐模式只用 decode 流，不受影响。
+4. 该次 unaligned 对比表（14188 vs 288384 tokens）无参考价值。
+
+### 如何检验各开关是否真正开启（运行时验证）
+
+| 开关 | 检验方法 |
+| --- | --- |
+| Megatron kernel 交换（`--transformer-impl local` + contract） | ① Megatron 启动时打印全量 arguments 表：`grep -E "transformer_impl|true_on_policy_contract|batch_invariant" log_*.txt`，看实际取值；② **模块类名**（`megatron_hs_hook` 现在自动打印首层 `layer/attn/core_attn/mlp` 类名）：kernel 交换生效时类名来自 patch 的 SGLang-backend spec，而非 stock Megatron（如 `TEDotProductAttention`）；对照 `/root/Megatron-LM/.../gpt_layer_specs.py:330` `if use_true_on_policy_backend:` 分支里注入的类名 |
+| SGLang deterministic / fa3 | SGLang server 启动打印 server_args：`grep -o "attention_backend[^,]*" log_*.txt`、`grep -i "deterministic" log_*.txt`；留意静默回退 warning（如 fa3 不可用退回 flashinfer） |
+| CUDA graph 状态 | `grep -i "cuda_graph\|disable-cuda-graph" log_*.txt` |
+| prefill 重算 | `grep -i "prefill" log_*.txt \| grep -iv chunked`，或直接看 rollout_log_probs 的 bf16 格点指纹 |
+| bf16 精度路径 | diff 分布是否落在二进制格点（max/p99 为 k/2^n 形式） |
 
 ## 在线 Metric：train_rollout_logprob_abs_diff
 
