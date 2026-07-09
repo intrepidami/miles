@@ -101,7 +101,14 @@ def _maybe_save_logprobs(rollout_data: RolloutBatch, rollout_id: int) -> None:
     if not save_dir:
         return
     parallel_state = get_parallel_state()
-    if parallel_state.tp.rank != 0 or not parallel_state.is_pp_last_stage:
+    # With DP/CP > 1 every (tp0, pp-last) rank would race on the same files,
+    # and log_probs.npy / rollout_log_probs.npy could end up from different
+    # ranks. Only the intra_dp_cp source rank writes (its shard stays aligned).
+    if (
+        parallel_state.tp.rank != 0
+        or not parallel_state.is_pp_last_stage
+        or parallel_state.intra_dp_cp.rank != 0
+    ):
         return
     from pathlib import Path
 
