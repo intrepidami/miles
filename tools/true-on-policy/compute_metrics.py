@@ -138,8 +138,10 @@ def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
     if not grouped:
         return None
 
+    # sort by step only: tuple comparison would fall through to ndarray
+    # comparison on equal steps and raise "truth value is ambiguous"
     return {
-        layer_id: np.concatenate([a for _, a in sorted(steps)], axis=0)
+        layer_id: np.concatenate([a for _, a in sorted(steps, key=lambda x: x[0])], axis=0)
         for layer_id, steps in grouped.items()
     }
 
