@@ -10,6 +10,7 @@ title: True-On-Policy 相关代码位置
 |------|------|
 | `miles/utils/arguments.py` | CLI 参数注册，包含 `--skip-train-step`、`--true-on-policy-mode` 等 |
 | `miles/backends/megatron_utils/actor.py` | Megatron actor 主循环，logprob 重算和 train 调用在此 |
+| `miles/backends/experimental/fsdp_utils/actor.py` | FSDP actor 主循环，`--skip-train-step` guard 在 `_train_core()` |
 | `miles/backends/training_utils/log_utils.py` | `_maybe_save_logprobs()` 落盘逻辑 |
 | `miles/utils/misc.py` | `load_function()`，支持 `/path/file.py:func` 格式 |
 | `scripts/run_qwen3_4b.py` | Qwen3 启动脚本，含 `match` 模式 |
@@ -32,6 +33,6 @@ title: True-On-Policy 相关代码位置
 
 | 文件 | 作用 |
 |------|------|
-| `tools/true-on-policy/run_megatron.py` | 测试启动器 |
+| `tools/true-on-policy/run_match.py` | 测试启动器（megatron / fsdp） |
 | `tools/true-on-policy/megatron_hs_hook.py` | Megatron hidden state 捕获 |
 | `tools/true-on-policy/compute_metrics.py` | 离线指标计算 |

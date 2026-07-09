@@ -6,7 +6,7 @@ Test that SGLang rollout logprobs match Megatron logprobs under `--true-on-polic
 
 | File                    | Purpose                                                    |
 | ----------------------- | ---------------------------------------------------------- |
-| `run_megatron.py`     | Runner: wraps`scripts/run_qwen3_4b.py` in `match` mode |
+| `run_match.py`        | Runner: wraps`scripts/run_qwen3_4b.py` in `match` mode (megatron or fsdp backend) |
 | `megatron_hs_hook.py` | Forward hook: captures per-layer Megatron hidden states    |
 | `compute_metrics.py`  | Offline analysis: Pearson r, MSE, per-layer L2 norms       |
 
@@ -24,7 +24,7 @@ export PYTHONPATH=/root/Megatron-LM:$PYTHONPATH
 
 ## Config
 
-Edit the `CONFIG` block at the top of `run_megatron.py`:
+Edit the `CONFIG` block at the top of `run_match.py` (paths only; runtime behavior is CLI flags):
 
 ```python
 MODEL_NAME        = "Qwen3-0.6B"      # 1 GPU (TP=1); "Qwen3-4B" needs more GPUs
@@ -32,8 +32,7 @@ MODEL_DIR         = "/root/models"
 DATA_DIR          = "/root/datasets"
 OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
-SAVE_DIR          = "/root/true-on-policy"
-CAPTURE_HIDDEN_STATES = True           # False to skip megatron_hs_hook (saves memory)
+BASE_DIR          = "/root/true-on-policy"   # each run saves to BASE_DIR/{YYYYMMDD_HHMMSS}/
 ```
 
 ## Run
@@ -41,46 +40,65 @@ CAPTURE_HIDDEN_STATES = True           # False to skip megatron_hs_hook (saves m
 First run — downloads Qwen3-0.6B + dapo-math-17k, converts HF checkpoint to Megatron format:
 
 ```bash
-python tools/true-on-policy/run_megatron.py
+python tools/true-on-policy/run_match.py
 ```
 
 Subsequent runs — skip download/conversion:
 
 ```bash
-python tools/true-on-policy/run_megatron.py --skip-prepare
+python tools/true-on-policy/run_match.py --skip-prepare
 ```
 
-Override GPU selection and parallelism:
+Megatron single GPU:
 
 ```bash
-python tools/true-on-policy/run_megatron.py \
+python tools/true-on-policy/run_match.py \
     --cuda-visible-devices 5 \
     --num-gpus-per-node 1 \
     --num-nodes 1 \
-    --skip-prepare
+    --skip-prepare \
+    --train-backend megatron \
+    --true-on-policy
 ```
 
-All output (stdout + stderr) is automatically tee'd to `log/train_YYYYMMDD_HHMMSS.txt` in the repo root.
+FSDP with 2 GPUs (DP=2):
+
+```bash
+python tools/true-on-policy/run_match.py \
+    --cuda-visible-devices 4,5 \
+    --num-gpus-per-node 2 \
+    --skip-prepare \
+    --train-backend fsdp \
+    --true-on-policy
+```
+
+Optional capture flags (both default OFF — nothing extra is written to disk):
+
+- `--capture-hidden-states` — Megatron per-layer hidden states via `megatron_hs_hook.py` (ignored with a warning on fsdp)
+- `--dumper-enable` — SGLang/Megatron tensor dumper into `tensor_cmp/`
+
+All output (stdout + stderr) is automatically tee'd to `log/log_YYYYMMDD_HHMMSS.txt` inside the run directory.
 
 What each run does:
 
-- Samples 128 prompts from dapo-math-17k, generates up to 2048 tokens, runs 2 rollout steps
+- Samples 128 prompts from dapo-math-17k, generates up to 2048 tokens, runs 1 rollout step
 - Skips backward pass and optimizer (`--skip-train-step`)
 - SGLang generates tokens and records `rollout_log_probs`
-- Megatron recomputes `log_probs` on the same tokens via `compute_log_prob`
-- Both arrays saved to `SAVE_DIR` as `.npy` files
-- If `CAPTURE_HIDDEN_STATES=True`: per-layer hidden states saved via `megatron_hs_hook.py`
+- The training backend recomputes `log_probs` on the same tokens
+- Both arrays saved under `BASE_DIR/{YYYYMMDD_HHMMSS}/` as `.npy` files
 
 ## Analyze results
 
 ```bash
-python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy
+python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/<YYYYMMDD_HHMMSS>
 ```
+
+Add `--hidden-states` to also compare per-layer hidden states from `tensor_cmp/` (default: off; needs a run with `--dumper-enable`).
 
 Expected output when logprobs match:
 
 ```
-Loading logprobs from /root/true-on-policy ...
+Loading logprobs from /root/true-on-policy/<YYYYMMDD_HHMMSS> ...
   log_probs shape:         (262144,)
   rollout_log_probs shape: (262144,)
 
@@ -140,16 +158,16 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy -
 
 | Variable                          | Set by                            | Effect                                |
 | --------------------------------- | --------------------------------- | ------------------------------------- |
-| `MILES_TRUE_ON_POLICY_SAVE_DIR` | `run_megatron.py` automatically | Enables logprob + hidden-state saving |
+| `MILES_TRUE_ON_POLICY_SAVE_DIR` | `run_match.py` automatically | Enables logprob + hidden-state saving |
 
 ## Troubleshooting
 
-**`rollout_log_probs.npy` missing** — `--true-on-policy-mode` not active. Check `true_on_policy=True` in `_build_args()` inside `run_megatron.py`.
+**`rollout_log_probs.npy` missing** — `--true-on-policy-mode` not active. Pass `--true-on-policy` to `run_match.py`.
 
 **`log_probs.npy` missing** — worker not on TP rank=0 / PP last stage. Normal for multi-GPU; only one rank writes.
 
-**No hidden states** — set `CAPTURE_HIDDEN_STATES = True` in CONFIG.
+**No hidden states** — pass `--capture-hidden-states` (megatron backend only).
 
 **Checkpoint conversion fails** — verify `MEGATRON_PATH` points to a working Megatron-LM install and is on `PYTHONPATH`.
 
-**SGLang OOM** — reduce `--sglang-mem-fraction-static` (default 0.7 for Megatron backend) via `extra_args` in `run_megatron.py`.
+**SGLang OOM** — reduce `--sglang-mem-fraction-static` (default 0.7 for Megatron backend, 0.75 for fsdp) via `extra_args` in `run_match.py`.

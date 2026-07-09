@@ -9,9 +9,10 @@ title: True-On-Policy 实现细节
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `miles/utils/arguments.py`                   | 新增`--skip-train-step`：跳过 backward + optimizer，rollout 和 log-prob 前向仍正常执行                                 |
 | `miles/backends/megatron_utils/actor.py`     | `train()` 调用受 `args.skip_train_step` 保护                                                                         |
+| `miles/backends/experimental/fsdp_utils/actor.py` | `_train_core()` 同样受 `args.skip_train_step` 保护（跳过 optimizer 循环，仍落盘 train data）                       |
 | `miles/backends/training_utils/log_utils.py` | 新增`_maybe_save_logprobs()`：在 `log_rollout_data()` 入口，当 `MILES_TRUE_ON_POLICY_SAVE_DIR` 设置时落盘 logprobs |
 | `miles/utils/misc.py`                        | `load_function` 支持文件路径格式 `/path/file.py:func`（原来只支持 dot-notation）                                     |
-| `scripts/run_qwen3_4b.py`                    | 新增`match` 模式                                                                                                       |
+| `scripts/run_qwen3_4b.py`                    | 新增`match` 模式；FSDP backend 时 `actor_num_gpus_per_node` 取 `num_gpus_per_node`（数据并行度=卡数），不再取 TP×PP×CP |
 
 ## match 模式参数
 
@@ -30,7 +31,7 @@ title: True-On-Policy 实现细节
 | `--micro-batch-size 1`（替代 dynamic batch） | 开启 | Megatron dump 每文件一个样本、保持 rollout 顺序，token 对齐对比的前提 |
 | `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
 
-注：`--true-on-policy-mode` **不再**是 match 模式的默认参数。当前 `run_megatron.py` 设置 `true_on_policy=False`，**不**附加 `--true-on-policy-mode`，跑的是基线失配测量。`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
+注：`--true-on-policy-mode` **不再**是 match 模式的默认参数。`run_match.py` 默认 `true_on_policy=False`（基线失配测量），加 CLI 开关 `--true-on-policy` 才启用。`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
 
 `true_on_policy=True` 时 `build_true_on_policy_launch_plan`（`miles/true_on_policy/config.py`）自动附加 `--recompute-logprobs-via-prefill`（rollout 结束后 SGLang 对完整序列做一次 prefill 重算，覆盖 decode 时的 logprobs）、SGLang 确定性推理参数、Megatron 确定性 kernel 参数及相关 env vars。
 
@@ -141,7 +142,7 @@ MSE 降 4 个数量级，r 只从小数点后第 5 位挪到第 9 位——开�
 
 **下一步**：用 token 对齐的逐层 hidden state 对比定位分歧起始层（dumper 文件名格式实测为 `step=N___rank=R___dump_index=D___name=...___layer_id=L.pt`，`step` 每 microbatch 递增）。layer 0 即分歧 → attention/embedding 入口（嫌疑 1）；逐层递增 → kernel 相近不相同的累积误差；各层皆小但 logprob 差大 → 嫌疑 3。
 
-**2026-07-09 run `20260709_025156` 的发现**（该次为 baseline——`run_megatron.py` 默认 `true_on_policy=False`，指标与 07-08 baseline 一致）：
+**2026-07-09 run `20260709_025156` 的发现**（该次为 baseline——启动器默认 `true_on_policy=False`，指标与 07-08 baseline 一致）：
 
 1. Megatron thd microbatch 有尾部 padding（每样本 pad 到 128 的倍数，如 2243→2304）——对齐加载已改为裁剪（`compute_metrics.py`）。
 2. **baseline 下 SGLang dump 无 decode 数据**（全部仅 14188 prefill token）：CUDA graph 回放不触发 dumper 的 python hook。match 模式已加 `--sglang-disable-cuda-graph`（`run_qwen3_4b.py`）。07-08 true-on-policy 次能捕到 decode，因确定性推理禁用了 graph。
@@ -187,11 +188,11 @@ train_rollout_kl = sum_of_sample_mean(
 
 ## 工具
 
-### `tools/true-on-policy/run_megatron.py`
+### `tools/true-on-policy/run_match.py`
 
-测试启动器，封装 `scripts/run_qwen3_4b.py` 的 `match` 模式。
+测试启动器（原 `run_megatron.py`，2026-07-09 改名），封装 `scripts/run_qwen3_4b.py` 的 `match` 模式，支持 megatron / fsdp 两种 backend。
 
-顶部 CONFIG 块配置路径：
+顶部 CONFIG 块只配置路径：
 
 ```python
 MODEL_NAME        = "Qwen3-0.6B"
@@ -200,13 +201,13 @@ DATA_DIR          = "/root/datasets"
 OUTPUT_DIR        = "/root/output"
 MEGATRON_PATH     = "/root/Megatron-LM"
 BASE_DIR          = "/root/true-on-policy"   # 每次运行在 BASE_DIR/{YYYYMMDD_HHMMSS}/ 下存数据
-CAPTURE_HIDDEN_STATES = True
-DUMPER_ENABLE     = True        # SGLang dumper：捕获 rollout + log-prob pass 张量
 ```
+
+运行时行为全部走 CLI 开关（见下），hidden-state hook 和 tensor dumper **默认关闭**。
 
 `DUMPER_DIR` 由运行时自动推导为 `{BASE_DIR}/{timestamp}/tensor_cmp`，无需手动配置。
 
-`DUMPER_ENABLE=True` 时自动附加：
+`--dumper-enable` 时自动附加：
 
 - `--dumper-enable --dumper-dir {run_dir}/tensor_cmp`
 - `--dumper-fwd-only enable=true non_intrusive_mode=all filter='<hidden_state_filter>'`
@@ -240,7 +241,17 @@ CLI 参数：
 --cuda-visible-devices  CUDA_VISIBLE_DEVICES（如 "5" 或 "0,1,2,3"）
 --num-gpus-per-node     覆盖 GPU 数（默认从 hardware 推导）
 --num-nodes             覆盖节点数（默认 1）
+--train-backend         megatron（默认）或 fsdp
+--true-on-policy        启用 true-on-policy（默认关，跑基线）
+--capture-hidden-states 启用 Megatron hidden-state hook（默认关；fsdp 下打印 warning 并忽略）
+--dumper-enable         启用 SGLang/Megatron tensor dumper（默认关）
 ```
+
+**FSDP match 支持**（2026-07-09）：`--train-backend fsdp --num-gpus-per-node 2` 跑 DP=2。相关改动：
+
+- `run_qwen3_4b.py`：fsdp 时 `actor_num_gpus_per_node = num_gpus_per_node`（原来取 TP×PP×CP，Qwen3-0.6B 下恒为 1，多卡闲置）。
+- `fsdp_utils/actor.py`：`--skip-train-step` 生效（原来只有 megatron actor 支持），跳过 optimizer 循环但仍写 dump_details train data。
+- fsdp + `--true-on-policy` 时 `build_true_on_policy_launch_plan` 走 fsdp 分支：附加 `--attn-implementation`（contract 指定，Qwen3 为 flash_attention_3）+ SGLang 确定性参数，不附加 Megatron kernel 交换参数。参照 `examples/true_on_policy/run_simple.py`（fsdp 配置下 `train_rollout_logprob_abs_diff` 已验证严格为 0）。
 
 ### `tools/true-on-policy/megatron_hs_hook.py`
 
@@ -264,6 +275,7 @@ Megatron hidden state 原始布局为 `[seq, batch, hidden]`，hook 转置为 `[
 | `--rank INT`       | 可选，默认 0   | dump_details 模式：读 `{rollout_id}_{rank}.pt`    |
 | `--rollout INT...` | 可选，默认全部 | 指定 rollout ID，如 `--rollout 0 1`               |
 | `--json`           | flag           | 额外打印 JSON                                       |
+| `--hidden-states`  | flag           | 开启逐层 hidden state 对比（默认不计算）            |
 | `--plot`           | flag           | 生成 `metrics/logprob_scatter.png`                |
 
 ```bash
@@ -280,9 +292,9 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/2
 | `tensor_cmp/fwd_only/*.pt`         | Megatron log-prob pass 每层 mlp.output（dumper 产生） |
 | `tensor_cmp/engines/engine_0/*.pt` | SGLang inference 每层 mlp.output（dumper 产生）       |
 
-logprob 文件由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制产生；tensor_cmp 文件由 `DUMPER_ENABLE=True` 产生。
+logprob 文件由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制产生；tensor_cmp 文件由 `--dumper-enable` 产生。
 
-**Hidden state 对比**（自动，当 `tensor_cmp/` 存在时）
+**Hidden state 对比**（需 `--hidden-states` 显式开启，且 `tensor_cmp/` 存在；默认不计算）
 
 优先走 **token 对齐模式**（需 dump_details 提供 `total_lengths`/`response_lengths`，且运行来自 `--micro-batch-size 1` 的 match 模式）：
 
@@ -424,4 +436,4 @@ engines/engine_0/         # SGLang inference 每层 hidden states（生成时）
 
 | 变量                              | 设置方                       | 效果                             |
 | --------------------------------- | ---------------------------- | -------------------------------- |
-| `MILES_TRUE_ON_POLICY_SAVE_DIR` | `run_megatron.py` 自动设置 | 触发 logprob + hidden state 落盘 |
+| `MILES_TRUE_ON_POLICY_SAVE_DIR` | `run_match.py` 自动设置 | 触发 logprob + hidden state 落盘 |
