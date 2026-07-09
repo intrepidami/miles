@@ -184,8 +184,6 @@ class FSDPTrainRayActor(TrainRayActor):
         if args.true_on_policy_mode:
             from sglang.srt.batch_invariant_ops import enable_batch_invariant_mode
 
-            from .models.qwen3_moe import apply_true_on_policy_patch_for_qwen3_moe
-
             logger.info("FSDPTrainRayActor call enable_batch_invariant_mode for true-on-policy")
             enable_batch_invariant_mode(
                 # In Qwen3, rope `inv_freq_expanded.float() @ position_ids_expanded.float()` uses bmm
@@ -193,7 +191,16 @@ class FSDPTrainRayActor(TrainRayActor):
                 enable_bmm=False,
             )
 
-            apply_true_on_policy_patch_for_qwen3_moe()
+            try:
+                from .models.qwen3_moe import apply_true_on_policy_patch_for_qwen3_moe
+            except ImportError as e:
+                # kernels/fused_experts.py imports SGLang fused_moe_triton
+                # internals whose module path moves across SGLang versions; the
+                # patch only swaps Qwen3MoeSparseMoeBlock, so dense models do
+                # not need it.
+                logger.warning(f"Skipping qwen3_moe true-on-policy patch, import failed: {e}")
+            else:
+                apply_true_on_policy_patch_for_qwen3_moe()
         else:
             from .models.qwen3_moe_hf import apply_fsdp_moe_patch
 
