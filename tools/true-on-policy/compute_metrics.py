@@ -49,15 +49,22 @@ def _load_logprobs_from_dump_details(
     for f in files:
         data = torch.load(f, map_location="cpu", weights_only=False)
         rb = data["rollout_data"]
-        for key, parts in [("log_probs", lp_parts), ("rollout_log_probs", rlp_parts)]:
+        # Collect both keys before appending so a file missing one key
+        # cannot leave lp_parts and rlp_parts misaligned.
+        vals = {}
+        for key in ("log_probs", "rollout_log_probs"):
             val = rb.get(key) if hasattr(rb, "get") else getattr(rb, key, None)
             if val is None:
                 print(f"  skip {f.name}: missing {key}")
                 break
-            if isinstance(val, (list, tuple)) and val:
-                parts.append(torch.cat(val).float().numpy())
-            else:
-                parts.append(val.float().numpy())
+            vals[key] = val
+        else:
+            for key, parts in [("log_probs", lp_parts), ("rollout_log_probs", rlp_parts)]:
+                val = vals[key]
+                if isinstance(val, (list, tuple)) and val:
+                    parts.append(torch.cat(val).float().numpy())
+                else:
+                    parts.append(val.float().numpy())
 
     if not lp_parts:
         raise FileNotFoundError(f"No valid train_data entries in {train_data_dir}")
