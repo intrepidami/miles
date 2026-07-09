@@ -205,6 +205,11 @@ python tools/true-on-policy/compute_metrics.py \
 
 读取 `dump_details/train_data/{rollout_id}_{rank}.pt`，从 `RolloutBatch` 中提取 `log_probs` 和 `rollout_log_probs`（list of tensors → concat）。由 dump_details 开关产生，需 Miles 可 import。
 
+**加载时的对齐校验**（自动执行）：
+
+- Mode 1：每个 rollout 目录内 `log_probs.npy` 与 `rollout_log_probs.npy` shape 必须相等（逐 rollout 检查，不只靠 concat 后的全局 assert——两个 rollout 的错位可能互相抵消）。
+- Mode 2：逐 sample 检查 `log_probs[i].shape == rollout_log_probs[i].shape`；当 token 总数等于 `sum(response_lengths)` 时，进一步检查每个 sample 的 token 数等于 `response_lengths[i]`（总数不等视为 CP 分片，跳过该项并打印提示；缺 `response_lengths` 同样跳过并提示）。全局 size 相等但逐 sample 错位（一长一短互补）会被此检查捕获。
+
 **计算原理**
 
 所有 rollout 按序 concat 后统一计算：
