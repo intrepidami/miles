@@ -327,6 +327,17 @@ tensor_cmp/
 
 只有 TP rank=0、PP last stage、intra_dp_cp rank=0 写文件（避免 DP/CP>1 时多 rank 写同一文件竞态）。
 
+**rank 是什么**：分布式训练里每个 GPU 进程的编号。守卫的含义——在所有进程中选出恰好一个既持有完整 logprob、又不与他人撞文件的进程写盘：
+
+| 并行 | 切什么 | 对 dump 的影响 |
+| --- | --- | --- |
+| TP | 权重矩阵切块 | logprob 在 TP 组内合并后各 rank 值相同 → 只让 tp rank 0 写，避免重复 |
+| PP | 模型按层切段 | logits 只在最后一段产生 → 只有 pp last stage 有 logprob |
+| DP | 样本切分 | 各 rank 数据不同，写同一文件名即竞写覆盖 → 只让 intra_dp_cp rank 0 写 |
+| CP | 序列按 token 切段 | 各 rank 只有序列一段，同 DP 问题 |
+
+单卡运行（TP=PP=CP=DP=1）全世界只有一个进程即 rank 0，守卫全放行：`train_data/0_0.pt` 中第一个 0 是 rollout id、第二个 0 是写它的进程 rank；`megatron_hs/rank_0/`、`compute_metrics.py --rank 0`（默认）同理。多卡时注意：dump 只含 rank 0 的数据分片，指标在该分片上计算，非全量。
+
 ### `/root/output/{run_id}/`（OUTPUT_DIR）
 
 ```
