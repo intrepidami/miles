@@ -440,6 +440,13 @@ class FSDPTrainRayActor(TrainRayActor):
 
         log_rollout_data(rollout_id, self.args, rollout_data)
 
+        if self.args.skip_train_step:
+            self.prof.step(rollout_id=rollout_id)
+
+            if self.args.save_debug_train_data is not None:
+                train_dump_utils.save_debug_train_data(self.args, rollout_id=rollout_id, rollout_data=rollout_data)
+            return
+
         with timer("actor_train"):
             data_iterator.reset()
             num_steps_per_rollout = len(num_microbatches)
