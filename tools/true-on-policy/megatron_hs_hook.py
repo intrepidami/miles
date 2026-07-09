@@ -58,6 +58,17 @@ def register(args: Namespace, model: list[torch.nn.Module], store_prefix: str) -
 
     for _name, module in model_chunk.named_modules():
         if hasattr(module, "self_attention") and hasattr(module, "mlp"):
+            if layer_idx == 0:
+                # Runtime evidence of the true-on-policy kernel swap: with
+                # --true-on-policy-contract active these class names come from
+                # the patched SGLang-backend spec, not stock Megatron modules.
+                print(
+                    f"[megatron_hs_hook] layer classes: layer={type(module).__name__} "
+                    f"attn={type(module.self_attention).__name__} "
+                    f"core_attn={type(getattr(module.self_attention, 'core_attention', None)).__name__} "
+                    f"mlp={type(module.mlp).__name__}",
+                    flush=True,
+                )
             idx = layer_idx
 
             def _hook(m: torch.nn.Module, inp: Any, out: Any, _idx: int = idx) -> None:
