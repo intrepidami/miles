@@ -191,7 +191,9 @@ eval:
     sglang_args = (
         f"--rollout-num-gpus-per-engine {args.rollout_num_gpus_per_engine} "
         "--sglang-chunked-prefill-size 4096 "
-        f"{'--sglang-disable-cuda-graph ' if is_debug_one_sample else ''}"
+        # match mode: CUDA graph replay bypasses the dumper's python hooks, so
+        # decode hidden states would never be captured
+        f"{'--sglang-disable-cuda-graph ' if is_debug_one_sample or is_match else ''}"
     )
     ci_args = "--ci-test --ci-disable-kl-checker " if is_debug_one_sample else ""
     if is_match:
