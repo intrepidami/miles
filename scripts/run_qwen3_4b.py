@@ -205,8 +205,11 @@ eval:
         ci_args += "--skip-train-step "
         # parse_args gates the experimental FSDP backend behind --ci-test
         # (miles/utils/arguments.py); run_simple.py passes the same flags.
+        # --ci-disable-logprobs-checker: match measures the train/rollout
+        # logprob mismatch offline, the CI equality asserts must not kill the
+        # run before dumping.
         if args.train_backend == "fsdp" and "--ci-test" not in ci_args:
-            ci_args += "--ci-test --ci-disable-kl-checker "
+            ci_args += "--ci-test --ci-disable-kl-checker --ci-disable-logprobs-checker "
 
     match args.train_backend:
         case "fsdp":
