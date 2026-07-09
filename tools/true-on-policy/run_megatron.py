@@ -29,8 +29,6 @@ DATA_DIR = "/root/datasets"
 OUTPUT_DIR = "/root/output"
 MEGATRON_PATH = "/root/Megatron-LM"
 BASE_DIR = "/root/true-on-policy"  # each run saves to BASE_DIR/{YYYYMMDD_HHMMSS}/
-CAPTURE_HIDDEN_STATES = True  # set False to skip megatron_hs_hook (saves memory)
-DUMPER_ENABLE = True  # enable SGLang dumper for rollout + Megatron log-prob pass
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -43,6 +41,8 @@ def _build_args(
     dumper_dir: Path,
     train_backend: str,
     true_on_policy: bool,
+    capture_hidden_states: bool,
+    dumper_enable: bool,
     num_gpus_per_node: int | None = None,
     num_nodes: int | None = None,
 ):
@@ -50,9 +50,9 @@ def _build_args(
     from scripts.run_qwen3_4b import ScriptArgs
 
     extra = ""
-    if CAPTURE_HIDDEN_STATES:
+    if capture_hidden_states:
         extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
-    if DUMPER_ENABLE:
+    if dumper_enable:
         _dumper_filter = 'layer_id is not None and name is not None and name.endswith(".mlp.output")'
         extra += (
             f"--dumper-enable "
@@ -105,6 +105,10 @@ def main() -> None:
         help="Training backend (default: megatron)",
     )
     parser.add_argument("--true-on-policy", action="store_true", help="Enable true-on-policy mode")
+    parser.add_argument(
+        "--capture-hidden-states", action="store_true", help="Enable Megatron hidden-state capture hook"
+    )
+    parser.add_argument("--dumper-enable", action="store_true", help="Enable SGLang/Megatron tensor dumper")
     cli = parser.parse_args()
 
     if cli.cuda_visible_devices is not None:
@@ -148,6 +152,8 @@ def main() -> None:
         dumper_dir=dumper_dir,
         train_backend=cli.train_backend,
         true_on_policy=cli.true_on_policy,
+        capture_hidden_states=cli.capture_hidden_states,
+        dumper_enable=cli.dumper_enable,
         num_gpus_per_node=cli.num_gpus_per_node,
         num_nodes=cli.num_nodes,
     )

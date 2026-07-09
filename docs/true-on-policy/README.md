@@ -46,12 +46,15 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-pol
 输出自动保存到 `log/train_YYYYMMDD_HHMMSS.txt`。
 
 可选参数
+
 - `--cuda-visible-devices 1,2,3,4`
-- `--num-gpu-per-node 1` 
+- `--num-gpu-per-node 1`
 - `--num-nodes 1`
 - `--skip-prepare`
 - `--train-backend {megatron,fsdp}`: Training backend. Defaults to `megatron`.
 - `--true-on-policy`: Enable true-on-policy mode. If omitted, true-on-policy is disabled.
+- `--capture-hidden-states`
+- `--dumper-enable`
 
 ## 预期输出
 
