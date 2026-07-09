@@ -4,8 +4,8 @@ Wraps scripts/run_qwen3_4b.py with logprob/hidden-state capture enabled.
 Output is tee'd to log/train_YYYYMMDD_HHMMSS.txt automatically.
 
 Edit the CONFIG section below, then:
-    python tools/true-on-policy/run_megatron.py [--skip-prepare]
-    python tools/true-on-policy/run_megatron.py --cuda-visible-devices 0,1 --num-gpus-per-node 2 --num-nodes 1
+    python tools/true-on-policy/run_match.py [--skip-prepare]
+    python tools/true-on-policy/run_match.py --cuda-visible-devices 0,1 --num-gpus-per-node 2 --num-nodes 1
 
 After the run:
     python tools/true-on-policy/compute_metrics.py --save-dir <SAVE_DIR>
