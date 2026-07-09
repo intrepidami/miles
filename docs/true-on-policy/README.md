@@ -20,7 +20,9 @@ title: True-On-Policy 一致性测试
 
 上次运行发现 `load_function` 不支持文件路径格式，已修复（`miles/utils/misc.py`）。
 
-实测发现开/关 true-on-policy 对 Pearson r 影响极小——这是 Pearson 的灵敏度问题而非功能无效；单卡 Qwen3-0.6B 下各开关的实际生效面与分析见 `implementation.md` 的"true-on-policy 在 Qwen3-0.6B 单卡 match 下的生效面"。
+实测发现开/关 true-on-policy 对 Pearson r 影响极小——这是 Pearson 的灵敏度问题（见 `implementation.md`"为什么 Pearson 对开关不敏感"）；单卡 Qwen3-0.6B 下各开关的实际生效面见 `implementation.md`"true-on-policy 在 Qwen3-0.6B 单卡 match 下的生效面"。
+
+**2026-07-08 实测（Qwen3-0.6B 单卡，262144 tokens）**：true-on-policy MSE=1.204e-3 vs baseline MSE=1.325e-3——**只降 9%，kernel 对齐未生效**（预期应降数个数量级至 ~0）。证据：① max|diff|=0.484375、p99=0.125 均为二进制整格点，mean|diff|≈1.6e-2 ≈ bf16 在 logprob 量级下的 1–2 ULP → 两侧都进了 bf16 路径但 kernel 结果不同；② max|diff| 从 0.865 降到 0.484，说明 prefill 重算部分生效；③ 两次运行由 `Var=MSE/(2(1−r))` 反推方差均 ≈1.2，测量管线自洽。待查：Megatron kernel 交换（`use_true_on_policy_backend`，需打过 patch 的 Megatron-LM）是否真正激活、kernel 对齐 flag 是否到达进程（grep 运行 log）、hidden state 逐层对比定位分歧起点。
 
 ## 快速运行
 
