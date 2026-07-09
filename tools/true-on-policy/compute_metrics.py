@@ -31,6 +31,47 @@ from pathlib import Path
 import numpy as np
 
 
+def _verify_sample_alignment(rb, lp_val, rlp_val, fname: str) -> None:
+    """Verify per-sample train/rollout logprob alignment inside one RolloutBatch.
+
+    A global size match after concat can hide per-sample misalignment (e.g. one
+    sample longer, the next shorter). Checks, per sample i:
+      - log_probs[i].shape == rollout_log_probs[i].shape
+      - numel == response_lengths[i] (skipped when totals differ, i.e. CP-sharded)
+    """
+    if not (isinstance(lp_val, (list, tuple)) and isinstance(rlp_val, (list, tuple))):
+        return
+    assert len(lp_val) == len(rlp_val), (
+        f"{fname}: sample count mismatch: {len(lp_val)} log_probs vs {len(rlp_val)} rollout_log_probs"
+    )
+    for i, (lp, rlp) in enumerate(zip(lp_val, rlp_val)):
+        assert lp.shape == rlp.shape, (
+            f"{fname}: sample {i}: log_probs {tuple(lp.shape)} vs rollout_log_probs {tuple(rlp.shape)}"
+        )
+
+    resp = rb.get("response_lengths") if hasattr(rb, "get") else getattr(rb, "response_lengths", None)
+    if resp is None:
+        print(f"  {fname}: no response_lengths; skipped response-length check")
+        return
+    total_tokens = sum(lp.numel() for lp in lp_val)
+    total_resp = int(sum(int(r) for r in resp))
+    if total_tokens != total_resp:
+        # CP > 1 stores per-rank shards; per-sample numel != response_length by design
+        print(
+            f"  {fname}: total tokens {total_tokens} != sum(response_lengths) {total_resp} "
+            f"(CP-sharded?); skipped per-sample response-length check"
+        )
+        return
+    assert len(resp) == len(lp_val), (
+        f"{fname}: {len(resp)} response_lengths vs {len(lp_val)} samples"
+    )
+    for i, (lp, r) in enumerate(zip(lp_val, resp)):
+        assert lp.numel() == int(r), (
+            f"{fname}: sample {i}: log_probs has {lp.numel()} tokens, response_length is {int(r)}"
+        )
+    print(f"  {fname}: alignment OK ({len(lp_val)} samples, {total_tokens} tokens match response_lengths)")
+
+
 def _load_logprobs_from_dump_details(
     dump_details_dir: Path, rank: int, rollout_ids: list[int] | None
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -59,6 +100,7 @@ def _load_logprobs_from_dump_details(
                 break
             vals[key] = val
         else:
+            _verify_sample_alignment(rb, vals["log_probs"], vals["rollout_log_probs"], f.name)
             for key, parts in [("log_probs", lp_parts), ("rollout_log_probs", rlp_parts)]:
                 val = vals[key]
                 if isinstance(val, (list, tuple)) and val:
@@ -83,8 +125,16 @@ def _load_logprobs(save_dir: Path, rollout_ids: list[int] | None) -> tuple[np.nd
         if not lp_path.exists() or not rlp_path.exists():
             print(f"  skip {rd.name}: missing log_probs.npy or rollout_log_probs.npy")
             continue
-        lp_parts.append(np.load(lp_path))
-        rlp_parts.append(np.load(rlp_path))
+        lp = np.load(lp_path)
+        rlp = np.load(rlp_path)
+        # check per rollout, not only after global concat: equal totals can
+        # hide two rollouts whose mismatches cancel out
+        assert lp.shape == rlp.shape, (
+            f"{rd.name}: log_probs {lp.shape} vs rollout_log_probs {rlp.shape}"
+        )
+        print(f"  {rd.name}: {lp.size} tokens, shapes match")
+        lp_parts.append(lp)
+        rlp_parts.append(rlp)
 
     if not lp_parts:
         raise FileNotFoundError(f"No valid rollout dirs found in {save_dir}")
