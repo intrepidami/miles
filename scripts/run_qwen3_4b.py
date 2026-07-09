@@ -107,7 +107,10 @@ def execute(args: ScriptArgs):
         f"--save {load_save_path} "
         f"--save-interval {2 if is_debug_mode else 20} "
     )
-    if not args.enable_megatron_bridge:
+    # --load points at the Megatron torch_dist conversion; the FSDP backend
+    # loads weights from --hf-checkpoint and its checkpoint.load() cannot read
+    # the torch_dist layout (tracker text "release" is not an int).
+    if args.train_backend == "megatron" and not args.enable_megatron_bridge:
         ckpt_args += f"--load {megatron_load_path} "
     if args.use_kl_loss:
         ref_load_path = f"{args.model_dir}/{args.model_name}"
