@@ -74,7 +74,7 @@ def _verify_sample_alignment(rb, lp_val, rlp_val, fname: str) -> None:
 
 def _load_logprobs_from_dump_details(
     dump_details_dir: Path, rank: int, rollout_ids: list[int] | None
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, list[tuple[int, int]] | None]:
     import torch
 
     train_data_dir = dump_details_dir / "train_data"
@@ -87,9 +87,17 @@ def _load_logprobs_from_dump_details(
         raise FileNotFoundError(f"No train_data files for rank={rank} in {train_data_dir}")
 
     lp_parts, rlp_parts = [], []
+    length_pairs: list[tuple[int, int]] | None = []
     for f in files:
         data = torch.load(f, map_location="cpu", weights_only=False)
         rb = data["rollout_data"]
+        if length_pairs is not None:
+            totals = rb.get("total_lengths") if hasattr(rb, "get") else getattr(rb, "total_lengths", None)
+            resps = rb.get("response_lengths") if hasattr(rb, "get") else getattr(rb, "response_lengths", None)
+            if totals is None or resps is None:
+                length_pairs = None
+            else:
+                length_pairs.extend((int(t) - int(r), int(t)) for t, r in zip(totals, resps))
         # Collect both keys before appending so a file missing one key
         # cannot leave lp_parts and rlp_parts misaligned.
         vals = {}
@@ -110,7 +118,7 @@ def _load_logprobs_from_dump_details(
 
     if not lp_parts:
         raise FileNotFoundError(f"No valid train_data entries in {train_data_dir}")
-    return np.concatenate(lp_parts), np.concatenate(rlp_parts)
+    return np.concatenate(lp_parts), np.concatenate(rlp_parts), length_pairs
 
 
 def _load_logprobs(save_dir: Path, rollout_ids: list[int] | None) -> tuple[np.ndarray, np.ndarray]:
@@ -149,12 +157,11 @@ def _pearson(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a_c, b_c) / denom) if denom > 0 else float("nan")
 
 
-def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
-    """Load dumper .pt files from a directory, group by layer_id, concat across steps.
+def _load_dumper_files(dump_dir: Path) -> dict[int, list[tuple[int, np.ndarray]]] | None:
+    """Load dumper .pt files, group by layer_id, keep per-file arrays with step order.
 
-    Returns dict: layer_id -> [total_tokens, hidden_dim] float32, or None if empty.
-    Steps are sorted numerically before concat so token order is preserved.
-    Tensors with ndim > 2 are flattened to [N, hidden_dim].
+    Returns dict: layer_id -> [(step, arr), ...] sorted by step, original ndim
+    preserved, or None if the directory is empty.
     """
     import torch
 
@@ -180,23 +187,195 @@ def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
             t = t[0]
         if not isinstance(t, torch.Tensor):
             continue
-        arr = t.float().detach().numpy()
-        if arr.ndim > 2:
-            arr = arr.reshape(-1, arr.shape[-1])
-        grouped[layer_id].append((step, arr))
+        grouped[layer_id].append((step, t.float().detach().numpy()))
 
     if not grouped:
         return None
-
     # sort by step only: tuple comparison would fall through to ndarray
     # comparison on equal steps and raise "truth value is ambiguous"
-    return {
-        layer_id: np.concatenate([a for _, a in sorted(steps, key=lambda x: x[0])], axis=0)
-        for layer_id, steps in grouped.items()
-    }
+    return {lid: sorted(steps, key=lambda x: x[0]) for lid, steps in grouped.items()}
 
 
-def _compare_hidden_states(save_dir: Path) -> None:
+def _load_dumper_tensors(dump_dir: Path) -> dict[int, np.ndarray] | None:
+    """Flattened view: layer_id -> [total_tokens, hidden_dim], concat across steps."""
+    grouped = _load_dumper_files(dump_dir)
+    if grouped is None:
+        return None
+    out = {}
+    for layer_id, steps in grouped.items():
+        arrs = [a.reshape(-1, a.shape[-1]) if a.ndim > 2 else a for _, a in steps]
+        out[layer_id] = np.concatenate(arrs, axis=0)
+    return out
+
+
+def _megatron_sample_seqs(
+    steps: list[tuple[int, np.ndarray]], length_pairs: list[tuple[int, int]]
+) -> list[np.ndarray] | None:
+    """One dumper file per sample (match mode runs with --micro-batch-size 1).
+
+    Validates file k has exactly total_lengths[k] tokens; returns per-sample
+    [total_len, hidden] arrays in rollout-data order, or None with a reason.
+    """
+    if len(steps) != len(length_pairs):
+        print(f"    megatron: {len(steps)} files != {len(length_pairs)} samples (need --micro-batch-size 1 run)")
+        return None
+    seqs = []
+    for k, (_, arr) in enumerate(steps):
+        if arr.ndim == 3:
+            if arr.shape[1] != 1:
+                print(f"    megatron: file {k} batch dim {arr.shape[1]} != 1 (dynamic batching?)")
+                return None
+            arr = arr[:, 0, :]
+        total = length_pairs[k][1]
+        if arr.shape[0] != total:
+            print(f"    megatron: file {k} has {arr.shape[0]} tokens, expected total_length {total}")
+            return None
+        seqs.append(arr)
+    return seqs
+
+
+def _sglang_decode_stack(
+    steps: list[tuple[int, np.ndarray]], num_samples: int, response_len: int
+) -> np.ndarray | None:
+    """Stack decode-step files into [T, N, hidden].
+
+    Decode files have shape [N, hidden] (one token per running request).
+    Prefill chunks have other shapes and are dropped. The dumper step counter
+    increments once per forward pass, so decode files form one contiguous step
+    run of length response_len-1 or response_len; prefill chunks that happen to
+    have N rows land in other (shorter) runs and are discarded by taking the
+    longest contiguous run.
+    """
+    cand = [(s, a) for s, a in steps if a.ndim == 2 and a.shape[0] == num_samples]
+    if not cand:
+        print("    sglang: no decode-shaped files")
+        return None
+    runs: list[list[np.ndarray]] = [[cand[0][1]]]
+    for (prev_s, _), (s, a) in zip(cand, cand[1:]):
+        if s == prev_s + 1:
+            runs[-1].append(a)
+        else:
+            runs.append([a])
+    run = max(runs, key=len)
+    if not (response_len - 1 <= len(run) <= response_len):
+        print(f"    sglang: longest decode run has {len(run)} steps, expected {response_len - 1} or {response_len}")
+        return None
+    return np.stack(run, axis=0)
+
+
+def _match_decode_columns(
+    meg_seqs: list[np.ndarray],
+    sg_stack: np.ndarray,
+    length_pairs: list[tuple[int, int]],
+) -> list[int] | None:
+    """Map SGLang decode column c -> sample index, by cosine of hidden states.
+
+    Decode step t of a request processes its response token t, which sits at
+    position prompt_len + t in the Megatron full-sequence forward. Matches on
+    t=0, then verifies the assignment at t = T//2 and T-1.
+    """
+    n = len(meg_seqs)
+    t_total = sg_stack.shape[0]
+
+    def cos_matrix(t: int) -> np.ndarray:
+        u = np.stack([meg_seqs[k][length_pairs[k][0] + t] for k in range(n)]).astype(np.float64)
+        v = sg_stack[t].astype(np.float64)
+        u /= np.linalg.norm(u, axis=1, keepdims=True) + 1e-30
+        v /= np.linalg.norm(v, axis=1, keepdims=True) + 1e-30
+        return v @ u.T  # [columns, samples]
+
+    assign = np.argmax(cos_matrix(0), axis=1)
+    if len(set(assign.tolist())) != n:
+        print("    match: column->sample assignment not one-to-one")
+        return None
+    for t in (t_total // 2, t_total - 1):
+        m = cos_matrix(t)
+        matched = m[np.arange(n), assign]
+        if matched.mean() < 0.9:
+            print(f"    match: verification at t={t} failed (mean cosine {matched.mean():.4f})")
+            return None
+    return assign.tolist()
+
+
+def _compare_hidden_states_aligned(save_dir: Path, length_pairs: list[tuple[int, int]]) -> bool:
+    """Token-aligned per-layer comparison. Returns False if preconditions fail.
+
+    Requires a match-mode run with --micro-batch-size 1 (one Megatron dumper
+    file per sample, rollout order) and uniform response lengths (SGLang decode
+    batch stays full-size). Column-to-sample mapping is recovered by cosine
+    matching, so SGLang's internal batch order does not need to equal rollout order.
+    """
+    meg_files = _load_dumper_files(save_dir / "tensor_cmp" / "fwd_only")
+    sg_files = _load_dumper_files(save_dir / "tensor_cmp" / "engines" / "engine_0")
+    if meg_files is None or sg_files is None:
+        return False
+    common = sorted(set(meg_files) & set(sg_files))
+    if not common:
+        return False
+
+    responses = {total - prompt for prompt, total in length_pairs}
+    if len(responses) != 1:
+        print(f"    aligned: response lengths vary ({sorted(responses)[:5]}...), decode batch not constant")
+        return False
+    response_len = responses.pop()
+    n = len(length_pairs)
+
+    # Match on the first common layer, then reuse the assignment everywhere.
+    ref = common[0]
+    ref_seqs = _megatron_sample_seqs(meg_files[ref], length_pairs)
+    ref_stack = _sglang_decode_stack(sg_files[ref], n, response_len)
+    if ref_seqs is None or ref_stack is None:
+        return False
+    assign = _match_decode_columns(ref_seqs, ref_stack, length_pairs)
+    if assign is None:
+        return False
+    t_total = ref_stack.shape[0]
+    print(f"\n=== Hidden state comparison (token-aligned, {n} samples x {t_total} decode steps) ===")
+    print(f"  {'layer':>5}  {'mse':>12}  {'mean_L2_diff':>14}  {'mean_token_cos':>15}")
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    for layer_id in common:
+        seqs = ref_seqs if layer_id == ref else _megatron_sample_seqs(meg_files[layer_id], length_pairs)
+        stack = ref_stack if layer_id == ref else _sglang_decode_stack(sg_files[layer_id], n, response_len)
+        if seqs is None or stack is None:
+            print(f"  {layer_id:>5}  skipped (load/validation failed)")
+            continue
+        sq_sum = l2_sum = cos_sum = 0.0
+        count = 0
+        for c in range(n):
+            k = assign[c]
+            prompt = length_pairs[k][0]
+            m = seqs[k][prompt : prompt + stack.shape[0]].astype(np.float64)
+            s = stack[:, c].astype(np.float64)
+            diff = m - s
+            sq_sum += float((diff**2).sum())
+            l2_sum += float(np.linalg.norm(diff, axis=-1).sum())
+            mn = np.linalg.norm(m, axis=-1) * np.linalg.norm(s, axis=-1)
+            cos_sum += float(((m * s).sum(axis=-1) / (mn + 1e-30)).sum())
+            count += m.shape[0]
+        mse = sq_sum / (count * seqs[0].shape[-1])
+        mean_l2 = l2_sum / count
+        mean_cos = cos_sum / count
+        print(f"  {layer_id:>5}  {mse:>12.4e}  {mean_l2:>14.4e}  {mean_cos:>15.6f}")
+        rows.append({
+            "timestamp": timestamp, "layer_id": layer_id, "num_tokens": count,
+            "mse": f"{mse:.6e}", "mean_l2_diff": f"{mean_l2:.6e}", "mean_token_cosine": f"{mean_cos:.6f}",
+        })
+
+    if not rows:
+        return False
+    csv_path = save_dir / "metrics" / "train_rollout_hidden_states_aligned.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  Written {csv_path}")
+    return True
+
+
+def _compare_hidden_states(save_dir: Path, length_pairs: list[tuple[int, int]] | None = None) -> None:
     """Compare Megatron fwd_only vs SGLang inference per-layer hidden states.
 
     Loads .pt files from tensor_cmp/fwd_only/ and tensor_cmp/engines/engine_0/.
@@ -213,6 +392,11 @@ def _compare_hidden_states(save_dir: Path) -> None:
 
     if not megatron_dir.exists() and not sglang_dir.exists():
         return
+
+    if length_pairs is not None:
+        if _compare_hidden_states_aligned(save_dir, length_pairs):
+            return
+        print("  token-aligned comparison unavailable, falling back to unaligned summary")
 
     print("\n=== Hidden state comparison (tensor_cmp) ===")
 
@@ -380,9 +564,10 @@ def main() -> None:
     rollout_ids: list[int] | None = args.rollout
 
     dump_details_dir = save_dir / "dump_details"
+    length_pairs: list[tuple[int, int]] | None = None
     if (dump_details_dir / "train_data").exists():
         print(f"Loading logprobs from dump_details (rank={args.rank}) ...")
-        log_probs, rollout_log_probs = _load_logprobs_from_dump_details(
+        log_probs, rollout_log_probs, length_pairs = _load_logprobs_from_dump_details(
             dump_details_dir, args.rank, rollout_ids
         )
     else:
@@ -408,7 +593,7 @@ def main() -> None:
         print(f"  max  |diff|:   {abs_diff.max():.6e}")
         print(f"  p99  |diff|:   {np.percentile(abs_diff, 99):.6e}")
 
-        _compare_hidden_states(save_dir)
+        _compare_hidden_states(save_dir, length_pairs)
 
         csv_row = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
