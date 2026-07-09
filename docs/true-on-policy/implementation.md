@@ -51,6 +51,22 @@ title: True-On-Policy 实现细节
 
 即：单卡下 true-on-policy 的全部有效改动 = **kernel 对齐（Megatron 用 SGLang math kernel + 关 fusion + batch invariant）+ prefill 重算 + bf16 精度对齐 + 双侧确定性**。TP 相关机制全部闲置。
 
+### 实测生效状态（2026-07-08 数据）
+
+上表是"配置层面会启用什么"；实测哪些**真正起了作用**：
+
+| 操作 | 实测状态 | 证据 |
+| --- | --- | --- |
+| bf16 精度对齐（`--true-on-policy-mode`：训练 logits 转 bf16 + rollout_log_probs 存 bf16） | ✅ 起作用 | diff 全落在 bf16 二进制格点上（max=31/64、p99=1/8），双侧都进了 bf16 路径 |
+| prefill 重算（`--recompute-logprobs-via-prefill`） | ✅ 起作用（部分效果） | max\|diff\| 0.865 → 0.484，decode 离群点被消除；但 mean/MSE 主体不动 |
+| kernel 交换（`--transformer-impl local` + `--true-on-policy-contract`，Megatron 用 SGLang math kernel） | ❌ **未达目标** | flag 到达、patch 在位，但两侧 bf16 结果不同（若 kernel 相同 diff 应为 0）——未激活或覆盖不全 |
+| `--batch-invariant-mode` / `--no-rope-fusion` / `--no-bias-swiglu-fusion` | ❓ 无法单独判定 | 从属于 kernel 对齐目标，整体未达成 |
+| SGLang `--sglang-enable-deterministic-inference` + fa3 | ❓ 未验证 | 需查 SGLang 启动 log 是否有静默回退 |
+| `--deterministic-mode` + env（NVTE/CUBLAS） | ✅（作用是可复现，不直接减小失配） | — |
+| TP invariant / NCCL_ALGO / sequence parallel | —（单卡闲置） | 见上表 |
+
+净效果：目前真正压失配的只有 **prefill 重算**（消 decode 离群点）；**bf16 对齐**统一了两侧精度但 kernel 不同导致格点上仍有 1–2 ULP 差；核心的 **kernel 交换未起作用**——这就是 MSE 只降 9% 的原因。定位见"原因分析"一节。
+
 ### 为什么 Pearson 对开关不敏感
 
 **设定**。记 `a` = Megatron 重算的 logprobs，`b` = SGLang 的 rollout logprobs，逐 token 配对。把失配建模为 `b = a + ε`：ε 是两引擎的数值差异（kernel 归约顺序、精度、fusion 等造成），近似与 a 独立、均值≈0，因此 `MSE ≈ Var(ε)`。
