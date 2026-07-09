@@ -13,7 +13,9 @@ title: True-On-Policy 一致性测试
 
 ## 当前状态
 
-**当前目标（2026-07-09 起）**：`run_match.py` 支持 FSDP backend + 2 GPU（DP=2），跑通 true-on-policy，对齐 `examples/true_on_policy/run_simple.py` 的 FSDP 配置（该配置已验证 `train_rollout_logprob_abs_diff` 严格为 0）。支持改动已完成（见 `implementation.md`"FSDP match 支持"），待实机运行验证。
+**当前目标（2026-07-09 起）**：`run_match.py` 支持 FSDP backend + 2 GPU（DP=2），跑通 true-on-policy，对齐 `examples/true_on_policy/run_simple.py` 的 FSDP 配置。支持改动已完成（见 `implementation.md`"FSDP match 支持"），管线已跑通（2026-07-09，单卡 fsdp + true-on-policy 全流程到指标汇总）。
+
+**重要前提校准**：`run_simple.py` / 官方 README 宣称的 `train_rollout_logprob_abs_diff` 严格为 0 是 **~2025-11（约 8 个月前，SGLang v0.5.10 时代）**验证的。当前 H800 上的 SGLang 明显更新（模块路径迁移：`fused_moe_triton` 位置变了；weight sync 需要 `begin_weight_update` 会话）。**"diff=0"的结论不能直接假设在当前栈成立**。2026-07-09 首次 fsdp true-on-policy 实测：两侧 logprob 均值差 7.4e-4（`log_probs=-0.60538` vs `rollout_log_probs=-0.60464`）——待 `compute_metrics.py` 出逐 token 指标后判断是版本漂移还是配置问题（先查 SGLang 启动 log 中 fa3/deterministic 是否静默回退）。
 
 **已搁置：Megatron hidden states shape 对齐 / kernel 交换定位任务**。搁置时的进度：
 
