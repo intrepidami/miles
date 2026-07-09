@@ -29,6 +29,7 @@ DATA_DIR = "/root/datasets"
 OUTPUT_DIR = "/root/output"
 MEGATRON_PATH = "/root/Megatron-LM"
 BASE_DIR = "/root/true-on-policy"   # each run saves to BASE_DIR/{YYYYMMDD_HHMMSS}/
+TRUE_ON_POLICY = False              # True: full kernel-alignment stack (--true-on-policy-mode, prefill recompute, deterministic kernels)
 CAPTURE_HIDDEN_STATES = True        # set False to skip megatron_hs_hook (saves memory)
 DUMPER_ENABLE = True                # enable SGLang dumper for rollout + Megatron log-prob pass
 # ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_node
         mode="match",
         model_name=MODEL_NAME,
         train_backend="megatron",
-        true_on_policy=False,
+        true_on_policy=TRUE_ON_POLICY,
         model_dir=MODEL_DIR,
         data_dir=DATA_DIR,
         output_dir=OUTPUT_DIR,
