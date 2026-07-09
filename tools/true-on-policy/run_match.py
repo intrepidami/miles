@@ -51,7 +51,10 @@ def _build_args(
 
     extra = ""
     if capture_hidden_states:
-        extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
+        if train_backend != "megatron":
+            print("WARNING: --capture-hidden-states uses a Megatron-only hook; ignored for fsdp backend")
+        else:
+            extra += f"--custom-megatron-before-log-prob-hook-path {_HOOK_PATH} "
     if dumper_enable:
         _dumper_filter = 'layer_id is not None and name is not None and name.endswith(".mlp.output")'
         extra += (
