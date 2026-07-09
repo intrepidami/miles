@@ -1,7 +1,6 @@
 ---
 title: True-On-Policy 一致性测试
 ---
-
 # True-On-Policy 一致性测试
 
 ## 目标
@@ -38,13 +37,21 @@ export PYTHONPATH=/root/Megatron-LM:$PYTHONPATH
 vim tools/true-on-policy/run_megatron.py
 
 # 4. 运行（--skip-prepare 跳过模型下载和 checkpoint 转换）
-python tools/true-on-policy/run_megatron.py --cuda-visible-devices 5 --skip-prepare
+python tools/true-on-policy/run_megatron.py --cuda-visible-devices 5 --num-gpu-per-node 1 --num-nodes 1 --skip-prepare --train-backend megatron --true-on-policy
 
 # 5. 分析结果
 python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-policy
 ```
 
 输出自动保存到 `log/train_YYYYMMDD_HHMMSS.txt`。
+
+可选参数
+- `--cuda-visible-devices 1,2,3,4`
+- `--num-gpu-per-node 1` 
+- `--num-nodes 1`
+- `--skip-prepare`
+- `--train-backend {megatron,fsdp}`: Training backend. Defaults to `megatron`.
+- `--true-on-policy`: Enable true-on-policy mode. If omitted, true-on-policy is disabled.
 
 ## 预期输出
 

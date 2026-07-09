@@ -23,15 +23,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # CONFIG — edit these paths before running
 # ---------------------------------------------------------------------------
-MODEL_NAME = "Qwen3-0.6B"      # "Qwen3-0.6B" (1 GPU, TP=1) or "Qwen3-4B" (needs more GPUs)
+MODEL_NAME = "Qwen3-0.6B"  # "Qwen3-0.6B" (1 GPU, TP=1) or "Qwen3-4B" (needs more GPUs)
 MODEL_DIR = "/root/models"
 DATA_DIR = "/root/datasets"
 OUTPUT_DIR = "/root/output"
 MEGATRON_PATH = "/root/Megatron-LM"
-BASE_DIR = "/root/true-on-policy"   # each run saves to BASE_DIR/{YYYYMMDD_HHMMSS}/
-TRUE_ON_POLICY = False              # True: full kernel-alignment stack (--true-on-policy-mode, prefill recompute, deterministic kernels)
-CAPTURE_HIDDEN_STATES = True        # set False to skip megatron_hs_hook (saves memory)
-DUMPER_ENABLE = True                # enable SGLang dumper for rollout + Megatron log-prob pass
+BASE_DIR = "/root/true-on-policy"  # each run saves to BASE_DIR/{YYYYMMDD_HHMMSS}/
+CAPTURE_HIDDEN_STATES = True  # set False to skip megatron_hs_hook (saves memory)
+DUMPER_ENABLE = True  # enable SGLang dumper for rollout + Megatron log-prob pass
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -40,7 +39,13 @@ _LOG_GUARD = "_MILES_TRUE_ON_POLICY_LOGGED"
 _RUN_TIMESTAMP_VAR = "_MILES_RUN_TIMESTAMP"
 
 
-def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_nodes: int | None = None):
+def _build_args(
+    dumper_dir: Path,
+    train_backend: str,
+    true_on_policy: bool,
+    num_gpus_per_node: int | None = None,
+    num_nodes: int | None = None,
+):
     sys.path.insert(0, str(_REPO_ROOT))
     from scripts.run_qwen3_4b import ScriptArgs
 
@@ -59,8 +64,8 @@ def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_node
     kwargs: dict = dict(
         mode="match",
         model_name=MODEL_NAME,
-        train_backend="megatron",
-        true_on_policy=TRUE_ON_POLICY,
+        train_backend=train_backend,
+        true_on_policy=true_on_policy,
         model_dir=MODEL_DIR,
         data_dir=DATA_DIR,
         output_dir=OUTPUT_DIR,
@@ -78,9 +83,28 @@ def _build_args(dumper_dir: Path, num_gpus_per_node: int | None = None, num_node
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-prepare", action="store_true", help="Skip model download and checkpoint conversion")
-    parser.add_argument("--cuda-visible-devices", default=None, metavar="IDS", help="Value for CUDA_VISIBLE_DEVICES (e.g. '0' or '0,1,2,3')")
-    parser.add_argument("--num-gpus-per-node", type=int, default=None, help="Override num_gpus_per_node (default: derived from hardware)")
-    parser.add_argument("--num-nodes", type=int, default=None, help="Override num_nodes (default: 1 or SLURM_JOB_NUM_NODES)")
+    parser.add_argument(
+        "--cuda-visible-devices",
+        default=None,
+        metavar="IDS",
+        help="Value for CUDA_VISIBLE_DEVICES (e.g. '0' or '0,1,2,3')",
+    )
+    parser.add_argument(
+        "--num-gpus-per-node",
+        type=int,
+        default=None,
+        help="Override num_gpus_per_node (default: derived from hardware)",
+    )
+    parser.add_argument(
+        "--num-nodes", type=int, default=None, help="Override num_nodes (default: 1 or SLURM_JOB_NUM_NODES)"
+    )
+    parser.add_argument(
+        "--train-backend",
+        choices=["megatron", "fsdp"],
+        default="megatron",
+        help="Training backend (default: megatron)",
+    )
+    parser.add_argument("--true-on-policy", action="store_true", help="Enable true-on-policy mode")
     cli = parser.parse_args()
 
     if cli.cuda_visible_devices is not None:
@@ -122,6 +146,8 @@ def main() -> None:
 
     args = _build_args(
         dumper_dir=dumper_dir,
+        train_backend=cli.train_backend,
+        true_on_policy=cli.true_on_policy,
         num_gpus_per_node=cli.num_gpus_per_node,
         num_nodes=cli.num_nodes,
     )
@@ -137,6 +163,7 @@ def main() -> None:
     dump_details_src = Path(OUTPUT_DIR) / args.run_id / "dump_details"
     if dump_details_src.exists():
         import shutil
+
         dump_details_dst = save_dir / "dump_details"
         shutil.move(str(dump_details_src), str(dump_details_dst))
         print(f"Moved dump_details → {dump_details_dst}")
