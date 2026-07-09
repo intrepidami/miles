@@ -29,9 +29,9 @@ title: True-On-Policy 实现细节
 | `--skip-train-step`        | 开启       | 不修改权重，可反复跑        |
 | `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
 
-注：`--true-on-policy-mode` **不再**是 match 模式的默认参数；它由 `run_megatron.py` 在 `extra_args` 中显式附加，使 `scripts/run_qwen3_4b.py match` 模式本身更通用。`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
+注：`--true-on-policy-mode` **不再**是 match 模式的默认参数。当前 `run_megatron.py` 设置 `true_on_policy=False`，**不**附加 `--true-on-policy-mode`，跑的是基线失配测量。`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
 
-`build_launch_plan`（`miles/true_on_policy/config.py`）自动附加 `--recompute-logprobs-via-prefill`，rollout 结束后 SGLang 对完整序列做一次 prefill 重算，覆盖 decode 时的 logprobs。
+`true_on_policy=True` 时 `build_true_on_policy_launch_plan`（`miles/true_on_policy/config.py`）自动附加 `--recompute-logprobs-via-prefill`（rollout 结束后 SGLang 对完整序列做一次 prefill 重算，覆盖 decode 时的 logprobs）、SGLang 确定性推理参数、Megatron 确定性 kernel 参数及相关 env vars。
 
 ## 在线 Metric：train_rollout_logprob_abs_diff
 
@@ -218,7 +218,7 @@ megatron_hs/
     layer_001.npy
     ...
 metrics/
-  match.csv               # compute_metrics.py 输出，每次追加一行
+  match.csv               # compute_metrics.py 输出，每次覆盖
 tensor_cmp/
   fwd_only/               # Megatron log-prob pass 每层 hidden states
   engines/engine_0/       # SGLang inference 每层 hidden states
@@ -230,7 +230,7 @@ tensor_cmp/
 | `rollout_*/rollout_log_probs.npy`  | 同上                                    | 同上                                                                                                                    |
 | `megatron_hs/rank_0/layer_NNN.npy` | `megatron_hs_hook.py:register()`      | `model.py:compute_log_probs()` 前调用，`atexit` 写盘，由 `--custom-megatron-before-log-prob-hook-path` 注入       |
 
-只有 TP rank=0、PP last stage 写文件。
+只有 TP rank=0、PP last stage、intra_dp_cp rank=0 写文件（避免 DP/CP>1 时多 rank 写同一文件竞态）。
 
 ### `/root/output/{run_id}/`（OUTPUT_DIR）
 

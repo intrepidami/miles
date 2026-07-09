@@ -14,6 +14,8 @@ title: True-On-Policy 一致性测试
 
 已实现 `match` 测试模式，工具就位，可直接运行。
 
+**注意：当前 `run_megatron.py` 设置 `true_on_policy=False`**（不加 `--true-on-policy-mode` 和 `--recompute-logprobs-via-prefill`），跑的是**基线失配测量**：`rollout_log_probs` 是 SGLang decode 时的值，Megatron 用标准 kernel 重算。此配置下 Pearson r = 1.0 / MSE = 0 的判定标准**不成立**，仅在开启 true-on-policy 后成立。
+
 上次运行发现 `load_function` 不支持文件路径格式，已修复（`miles/utils/misc.py`）。
 
 ## 快速运行
@@ -48,7 +50,7 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/code/true-on-pol
   mean |diff|:   0.000000e+00
 ```
 
-结果追加到 `/root/true-on-policy/metrics/match.csv`。
+结果写入 `<save_dir>/metrics/match.csv`（每次覆盖）。
 
 偏差 → logprob 不一致，用 per-layer hidden state 定位（见 implementation.md）。
 
