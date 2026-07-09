@@ -245,6 +245,8 @@ CLI 参数：
 --true-on-policy        启用 true-on-policy（默认关，跑基线）
 --capture-hidden-states 启用 Megatron hidden-state hook（默认关；fsdp 下打印 warning 并忽略）
 --dumper-enable         启用 SGLang/Megatron tensor dumper（默认关）
+--wandb                 启用 wandb 上报（默认关：run_match 会移除 WANDB_API_KEY 并设 WANDB_MODE=disabled，
+                        match 结果用 compute_metrics.py 离线判定，不依赖 wandb）
 ```
 
 **FSDP match 支持**（2026-07-09）：`--train-backend fsdp --num-gpus-per-node 2` 跑 DP=2。相关改动：
