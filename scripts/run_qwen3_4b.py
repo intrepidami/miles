@@ -238,6 +238,12 @@ eval:
         case _:
             raise NotImplementedError
 
+    if is_match:
+        # One sample per microbatch, no dynamic batching: keeps the Megatron
+        # forward in rollout-data order so dumped per-layer hidden states can be
+        # aligned per sample/token against SGLang decode dumps offline.
+        perf_args = "--micro-batch-size 1 "
+
     misc_args = (
         f"--actor-num-nodes {args.num_nodes} "
         f"--actor-num-gpus-per-node {actor_num_gpus_per_node} "
