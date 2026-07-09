@@ -54,12 +54,21 @@ title: True-On-Policy 实现细节
 
 **设定**。记 `a` = Megatron 重算的 logprobs，`b` = SGLang 的 rollout logprobs，逐 token 配对。把失配建模为 `b = a + ε`：ε 是两引擎的数值差异（kernel 归约顺序、精度、fusion 等造成），近似与 a 独立、均值≈0，因此 `MSE ≈ Var(ε)`。
 
-**推导**。由 Pearson 定义 `r = cov(a,b) / (σ_a·σ_b)`，代入 `b = a + ε`（ε ⟂ a）：
+**用到的事实**。① `cov(x,x) = Var(x)`；② ε 与 a 独立时 `cov(a,ε) = 0` 且 `Var(a+ε) = Var(a) + Var(ε)`；③ Pearson 定义 `r = cov(a,b)/(σ_a·σ_b)`，其中 `σ = √Var`；④ ε 均值≈0 时 `MSE = mean(ε²) ≈ Var(ε)`。
+
+**推导（三步）**：
 
 ```
-cov(a,b) = Var(a),   σ_b = √(Var(a) + Var(ε))
+第1步 分子：  cov(a,b) = cov(a, a+ε) = cov(a,a) + cov(a,ε) = Var(a) + 0 = Var(a)
+第2步 分母：  Var(b) = Var(a+ε) = Var(a) + Var(ε)，故 σ_b = √(Var(a)+Var(ε))
+第3步 代入：  r = Var(a) / [√Var(a) · √(Var(a)+Var(ε))]
+                = 1 / √(1 + x)，   x ≜ Var(ε)/Var(a)（噪声占信号比例，精确式）
+```
 
-r = 1 / √(1 + Var(ε)/Var(a)) ≈ 1 − MSE / (2·Var(a))    （MSE ≪ Var(a) 时）
+x ≪ 1 时取一阶近似 `1/√(1+x) ≈ 1 − x/2`（x<0.01 时误差可忽略），再用④把 `Var(ε)` 换成 MSE：
+
+```
+r ≈ 1 − MSE / (2·Var(a))
 ```
 
 **信号与噪声的量级差**。logprob 本身分布很宽：高置信 token 接近 0，难 token 掉到 −5、−10 以下。这个跨度是"信号"——两个引擎对同一批 token 给出的共同宽分布，样本方差 `Var(a)` 量级 1–10 nat²。失配 ε 只是叠加其上的微扰：基线（不开 true-on-policy）逐 token 差通常 ~1e-3–1e-2，MSE ~1e-6–1e-4，比 `Var(a)` 小 4–7 个数量级。
