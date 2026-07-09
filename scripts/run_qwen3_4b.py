@@ -92,7 +92,9 @@ def execute(args: ScriptArgs):
     model_parallel_size = (
         args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
     )
-    actor_num_gpus_per_node = model_parallel_size
+    # FSDP is data-parallel: its degree is the GPU count, not TP*PP*CP (which
+    # is 1 for Qwen3-0.6B and would leave extra GPUs idle).
+    actor_num_gpus_per_node = args.num_gpus_per_node if args.train_backend == "fsdp" else model_parallel_size
     train_world_size = args.num_nodes * actor_num_gpus_per_node
     data_parallel_size = max(1, train_world_size // model_parallel_size)
     debug_num_rollout = max(2, data_parallel_size)
