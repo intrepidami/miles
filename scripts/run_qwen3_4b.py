@@ -200,6 +200,10 @@ eval:
     ci_args = "--ci-test --ci-disable-kl-checker " if is_debug_one_sample else ""
     if is_match:
         ci_args += "--skip-train-step "
+        # parse_args gates the experimental FSDP backend behind --ci-test
+        # (miles/utils/arguments.py); run_simple.py passes the same flags.
+        if args.train_backend == "fsdp" and "--ci-test" not in ci_args:
+            ci_args += "--ci-test --ci-disable-kl-checker "
 
     match args.train_backend:
         case "fsdp":
