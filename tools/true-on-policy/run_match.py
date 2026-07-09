@@ -111,11 +111,18 @@ def main() -> None:
     parser.add_argument(
         "--capture-hidden-states", action="store_true", help="Enable Megatron hidden-state capture hook"
     )
+    parser.add_argument("--wandb", action="store_true", help="Enable wandb logging (default: disabled)")
     parser.add_argument("--dumper-enable", action="store_true", help="Enable SGLang/Megatron tensor dumper")
     cli = parser.parse_args()
 
     if cli.cuda_visible_devices is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = cli.cuda_visible_devices
+
+    if not cli.wandb:
+        # get_default_wandb_args() enables wandb only when WANDB_API_KEY is set;
+        # match runs are judged offline via compute_metrics.py, so default off.
+        os.environ.pop("WANDB_API_KEY", None)
+        os.environ.setdefault("WANDB_MODE", "disabled")
 
     # Tee stdout+stderr to a log file inside the timestamped run directory.
     if not os.environ.get(_LOG_GUARD):
