@@ -33,6 +33,35 @@ title: True-On-Policy 实现细节
 
 `true_on_policy=True` 时 `build_true_on_policy_launch_plan`（`miles/true_on_policy/config.py`）自动附加 `--recompute-logprobs-via-prefill`（rollout 结束后 SGLang 对完整序列做一次 prefill 重算，覆盖 decode 时的 logprobs）、SGLang 确定性推理参数、Megatron 确定性 kernel 参数及相关 env vars。
 
+## true-on-policy 在 Qwen3-0.6B 单卡 match 下的生效面
+
+`true_on_policy=True` 时 `build_true_on_policy_launch_plan`（`miles/true_on_policy/config.py`）对 Qwen3-0.6B（profile `qwen3_dense`，contract `qwen3_dense_true_on_policy_v1`）+ Megatron + 单卡（TP=PP=CP=1，rollout 单卡引擎 → `sglang_target="fsdp"`）生成的开关及其实际状态：
+
+| 开关 | 来源 | 单卡是否生效 |
+| --- | --- | --- |
+| `--recompute-logprobs-via-prefill`：rollout 后 SGLang prefill 重算 `rollout_log_probs`（`prefill_logprobs.py`），消除 decode/prefill 路径差异 | `miles_args` | 生效 |
+| `--true-on-policy-mode`：训练侧 logits 转 bf16 再算 logprob（`logit_processors.py:56`）；`rollout_log_probs` 以 bf16 存储（`data.py:22`），两侧数值精度对齐 | `miles_args` | 生效 |
+| `--deterministic-mode`（Megatron 确定性执行） | `miles_args` | 生效 |
+| `--sglang-enable-deterministic-inference` + `--sglang-attention-backend fa3` + `--sglang-true-on-policy-contract` | `sglang_args` | 生效 |
+| `--transformer-impl local` + `--true-on-policy-contract`：Megatron 层 spec 换用 SGLang math kernel（`model_provider.py:250` `use_true_on_policy_backend`）；`--batch-invariant-mode`、`--no-rope-fusion`、`--no-bias-swiglu-fusion` | `megatron_args` | 生效 |
+| `tp_invariant_row_linear` / `deterministic_tp_allreduce`（跨 rank TP 数值一致性） | kernel policy | **不生效** — 仅 `sglang_target="fsdp_tp"`（TP>1）时开启 |
+| `use_sequence_parallel=False`（script defaults） | `apply_true_on_policy_script_defaults` | 无效果 — SP 本需 TP>1 |
+| `NCCL_ALGO=Ring`、`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`、`CUBLAS_WORKSPACE_CONFIG` | env vars | `NCCL_ALGO` 单卡无通信、无效果；其余生效 |
+
+即：单卡下 true-on-policy 的全部有效改动 = **kernel 对齐（Megatron 用 SGLang math kernel + 关 fusion + batch invariant）+ prefill 重算 + bf16 精度对齐 + 双侧确定性**。TP 相关机制全部闲置。
+
+### 为什么 Pearson 对开关不敏感
+
+对齐的成对数据 `b = a + ε`（ε 为失配噪声），Pearson 近似满足：
+
+```
+r ≈ 1 − MSE / (2 · Var(log_probs))
+```
+
+logprob 的样本方差量级 ~1–10，而基线 MSE 已远小于它，所以**不开** true-on-policy 时 r 就已经 ≈0.999+；开了之后 MSE 再降几个数量级，r 只能从 0.999x 挪向 1.0，小数点后四五位才见差别。Pearson 的分母把灵敏度压没了。
+
+结论：Pearson 只适合做结构性 sanity check（r 明显 <0.99 说明 token 错位等结构问题）；**判别 true-on-policy 效果要看 MSE / mean|diff| / max|diff|**，它们随开关变化可差数个数量级。`match.csv` 已包含这些字段。
+
 ## 在线 Metric：train_rollout_logprob_abs_diff
 
 `losses.py:policy_loss_function` 在每次训练 forward 中计算（`rollout_log_probs` 存在时）：

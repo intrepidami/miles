@@ -8,7 +8,9 @@ title: True-On-Policy 一致性测试
 
 验证在 `--true-on-policy-mode` 下，SGLang 推理引擎记录的 `rollout_log_probs` 与 Megatron 训练引擎对同一 token 序列重算的 `log_probs` 数值完全一致。
 
-判定标准：Pearson r = 1.0，MSE = 0。
+判定标准：MSE = 0，mean |diff| = 0（Pearson r = 1.0 仅作 sanity check）。
+
+注意：Pearson 对失配不敏感——`r ≈ 1 − MSE/(2·Var)`，基线（不开 true-on-policy）r 就已 ≈0.999+，开关前后差别只在小数点后四五位。判别效果看 MSE / mean|diff| / max|diff|，详见 `implementation.md` 的"为什么 Pearson 对开关不敏感"。
 
 ## 当前状态
 
@@ -17,6 +19,8 @@ title: True-On-Policy 一致性测试
 **注意：当前 `run_megatron.py` 设置 `true_on_policy=False`**（不加 `--true-on-policy-mode` 和 `--recompute-logprobs-via-prefill`），跑的是**基线失配测量**：`rollout_log_probs` 是 SGLang decode 时的值，Megatron 用标准 kernel 重算。此配置下 Pearson r = 1.0 / MSE = 0 的判定标准**不成立**，仅在开启 true-on-policy 后成立。
 
 上次运行发现 `load_function` 不支持文件路径格式，已修复（`miles/utils/misc.py`）。
+
+实测发现开/关 true-on-policy 对 Pearson r 影响极小——这是 Pearson 的灵敏度问题而非功能无效；单卡 Qwen3-0.6B 下各开关的实际生效面与分析见 `implementation.md` 的"true-on-policy 在 Qwen3-0.6B 单卡 match 下的生效面"。
 
 ## 快速运行
 
