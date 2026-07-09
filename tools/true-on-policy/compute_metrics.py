@@ -558,6 +558,10 @@ def main() -> None:
         help="Rollout IDs to include (default: all). Example: --rollout 0 1",
     )
     parser.add_argument("--json", action="store_true", help="Also print JSON output.")
+    parser.add_argument(
+        "--hidden-states", action="store_true",
+        help="Also compare per-layer hidden states from tensor_cmp/ (default: off).",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--metric", action="store_true", help="Compute metrics and write CSV only (default).")
     mode.add_argument("--plot", action="store_true", help="Generate logprob_scatter.png only.")
@@ -601,7 +605,8 @@ def main() -> None:
         print(f"  max  |diff|:   {abs_diff.max():.6e}")
         print(f"  p99  |diff|:   {np.percentile(abs_diff, 99):.6e}")
 
-        _compare_hidden_states(save_dir, length_pairs)
+        if args.hidden_states:
+            _compare_hidden_states(save_dir, length_pairs)
 
         csv_row = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
