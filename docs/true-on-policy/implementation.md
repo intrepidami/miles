@@ -250,6 +250,7 @@ CLI 参数：
 **FSDP match 支持**（2026-07-09）：`--train-backend fsdp --num-gpus-per-node 2` 跑 DP=2。相关改动：
 
 - `run_qwen3_4b.py`：fsdp 时 `actor_num_gpus_per_node = num_gpus_per_node`（原来取 TP×PP×CP，Qwen3-0.6B 下恒为 1，多卡闲置）。
+- `run_qwen3_4b.py`：`--load`（Megatron torch_dist 转换目录）只在 megatron backend 时附加——FSDP 从 `--hf-checkpoint` 加载权重，其 `checkpoint.load()` 读不了 torch_dist 布局（tracker 文本 `release` 不是 int，直接 `ValueError`）。
 - `run_qwen3_4b.py`：fsdp match 自动附加 `--ci-test --ci-disable-kl-checker`——`parse_args`（`miles/utils/arguments.py`）把 experimental FSDP backend 挡在 `--ci-test` 后面，不带会直接 `ValueError`；`run_simple.py` 同样带此 flag。match 模式 `--skip-train-step` 下 ci-test 的 grad-norm 检查不会执行。
 - `fsdp_utils/actor.py`：`--skip-train-step` 生效（原来只有 megatron actor 支持），跳过 optimizer 循环但仍写 dump_details train data。
 - fsdp + `--true-on-policy` 时 `build_true_on_policy_launch_plan` 走 fsdp 分支：附加 `--attn-implementation`（contract 指定，Qwen3 为 flash_attention_3）+ SGLang 确定性参数，不附加 Megatron kernel 交换参数。参照 `examples/true_on_policy/run_simple.py`（fsdp 配置下 `train_rollout_logprob_abs_diff` 已验证严格为 0）。
