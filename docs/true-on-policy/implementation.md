@@ -237,6 +237,22 @@ logprob 文件由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制产生；tensor_cmp 文�
 
 前提不满足（response 长度不一致、microbatch>1、decode 段缺失等）自动回退到旧的**非对齐概要**（均值向量 cosine + L2 norm 对比，仅量级参考）并打印原因。回退模式下 Megatron 是 full-sequence forward、SGLang 是 prefill+decode，token 集合与顺序都不同，MSE 无意义。
 
+**对齐的实现原理**（2026-07-09 实现，commit `5f71beb10` + `7415ce702`）
+
+原始 dump 存在三重错位，逐 token MSE 全部算不出（2026-07-08 运行全层 shape_mismatch：282624 vs 294081 tokens）：
+
+1. **Megatron 样本顺序丢失**：thd packed 布局把多个样本连进一个 microbatch 张量且不带边界信息，`--use-dynamic-batch-size` 又按 token 数均衡重排样本——离线无法恢复"哪段属于哪个样本"。旧数据因此不可修复，只能改采集。
+2. **token 集合不同**：Megatron 前向覆盖全序列（prompt+response），SGLang dump 是 prefill 块 + decode 步的混合流。
+3. **SGLang 列序未知**：decode step 文件的行序是引擎内部 batch 槽位序，与 rollout 样本序无对应保证。
+
+三个错位各自的解法：
+
+- **错位 1 → 采集端修**（`run_qwen3_4b.py` match 模式）：`--micro-batch-size 1` 且不用 dynamic batch。thd + microbatch=1 时每个 dumper 文件恰是一个完整样本 `[total_len, 1, hidden]`、无 padding，文件 step 序 = data iterator 序 = rollout_data 序 = dump_details train_data 序。**顺序正确性可离线验证**：逐文件比对 token 数与 `total_lengths[k]`——128 个长度依次全等，顺序错位的概率可忽略；任一不等即报错回退。
+- **错位 2 → 位置映射**：decode step t 处理的输入是 response[t]，位于全序列位置 `prompt_len + t`。因此 SGLang decode 流第 t 步 ↔ Megatron 该样本第 `prompt_len+t` 行，只比较 response 段（T = response_len−1 或 response_len 步），prefill 块直接丢弃。decode 文件的识别利用 dumper step 计数器每次 forward pass 递增的性质：decode 是 step 上**最长的连续段**（prefill 块即使碰巧也是 N 行，也落在别的短段里被剔除）。
+- **错位 3 → 内容匹配**：不假设列序，用 hidden state 本身认人。取 t=0（每列的第一个 decode hidden）与全部样本在各自 `prompt_len` 位置的 Megatron hidden 算 128×128 余弦矩阵，逐列 argmax 得到 列→样本 映射；要求映射一一（非单射即拒绝），并在 t=T/2、T−1 两处复验（matched mean cosine ≥0.9）。匹配只在第一个公共层做一次，映射复用到所有层。可行性依据：同一 token 的两侧 hidden 即使有 kernel 级差异，余弦仍 ~0.99+，而不同 token 的 hidden 余弦远低——信号间隔大，匹配稳定（合成数据含 1e-3 噪声 + 干扰段测试通过）。
+
+局限：要求所有样本 response 等长（否则 decode batch 中途缩水，`[N,hidden]` 形状假设破产——match 模式全部打满 2048 满足）；单 rollout；TP/PP/CP/DP=1。
+
 **Mode 2 — dump_details .pt**
 
 ```bash
