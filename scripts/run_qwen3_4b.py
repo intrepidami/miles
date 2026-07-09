@@ -215,8 +215,13 @@ eval:
                 "--attn-implementation flash_attention_2 "
                 "--gradient-checkpointing "
                 f"--update-weight-buffer-size {512 * 1024 * 1024} "  # 512MB
-                """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
             )
+            if not is_match:
+                # expandable_segments memory is shared to SGLang via
+                # pidfd_getfd, which restricted containers forbid ("Operation
+                # not permitted" crash during colocated weight sync);
+                # run_simple.py does not set it either.
+                train_backend_args += """--train-env-vars '{"PYTORCH_CUDA_ALLOC_CONF":"expandable_segments:True"}' """
             sglang_args += "--sglang-mem-fraction-static 0.75 "
             perf_args = f"--use-dynamic-batch-size --max-tokens-per-gpu {args.max_tokens_per_gpu} "
 
