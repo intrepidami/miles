@@ -52,15 +52,30 @@ title: True-On-Policy 实现细节
 
 ### 为什么 Pearson 对开关不敏感
 
-对齐的成对数据 `b = a + ε`（ε 为失配噪声），Pearson 近似满足：
+**设定**。记 `a` = Megatron 重算的 logprobs，`b` = SGLang 的 rollout logprobs，逐 token 配对。把失配建模为 `b = a + ε`：ε 是两引擎的数值差异（kernel 归约顺序、精度、fusion 等造成），近似与 a 独立、均值≈0，因此 `MSE ≈ Var(ε)`。
+
+**推导**。由 Pearson 定义 `r = cov(a,b) / (σ_a·σ_b)`，代入 `b = a + ε`（ε ⟂ a）：
 
 ```
-r ≈ 1 − MSE / (2 · Var(log_probs))
+cov(a,b) = Var(a),   σ_b = √(Var(a) + Var(ε))
+
+r = 1 / √(1 + Var(ε)/Var(a)) ≈ 1 − MSE / (2·Var(a))    （MSE ≪ Var(a) 时）
 ```
 
-logprob 的样本方差量级 ~1–10，而基线 MSE 已远小于它，所以**不开** true-on-policy 时 r 就已经 ≈0.999+；开了之后 MSE 再降几个数量级，r 只能从 0.999x 挪向 1.0，小数点后四五位才见差别。Pearson 的分母把灵敏度压没了。
+**信号与噪声的量级差**。logprob 本身分布很宽：高置信 token 接近 0，难 token 掉到 −5、−10 以下。这个跨度是"信号"——两个引擎对同一批 token 给出的共同宽分布，样本方差 `Var(a)` 量级 1–10 nat²。失配 ε 只是叠加其上的微扰：基线（不开 true-on-policy）逐 token 差通常 ~1e-3–1e-2，MSE ~1e-6–1e-4，比 `Var(a)` 小 4–7 个数量级。
 
-结论：Pearson 只适合做结构性 sanity check（r 明显 <0.99 说明 token 错位等结构问题）；**判别 true-on-policy 效果要看 MSE / mean|diff| / max|diff|**，它们随开关变化可差数个数量级。`match.csv` 已包含这些字段。
+**代入数字**（取 `Var(a) = 2`）：
+
+| 配置 | MSE | r = 1 − MSE/(2·Var) | 打印 6 位小数 |
+| --- | --- | --- | --- |
+| 基线（关） | 1e-4 | 0.999975 | 0.999975 |
+| true-on-policy（开） | 1e-8 | 0.9999999975 | 1.000000 |
+
+MSE 降 4 个数量级，r 只从小数点后第 5 位挪到第 9 位——开关前后 r 几乎不可辨。
+
+**直觉**。Pearson 本质是信噪比度量：`1 − r ∝ 噪声方差/信号方差`。信号（token 难易差异）巨大，噪声被它一除就湮灭。好比两把尺子量 0–1m 的物体，误差 0.01mm 还是 0.1mm，相关系数都 ≈1——相关性对误差的绝对大小天然钝感。MSE / mean|diff| 直接度量 ε 本身，不被信号方差归一化，所以能区分开关。
+
+结论：Pearson 只适合做结构性 sanity check（r 明显 <0.99 说明 token 错位等结构问题——错位使 ε 不再是小扰动而是打乱配对，`cov(a,b)` 崩塌）；**判别 true-on-policy 效果要看 MSE / mean|diff| / max|diff|**，它们随开关变化可差数个数量级。`match.csv` 已包含这些字段。
 
 ## 在线 Metric：train_rollout_logprob_abs_diff
 
