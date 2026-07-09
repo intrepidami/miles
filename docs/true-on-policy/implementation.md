@@ -102,6 +102,29 @@ MSE 降 4 个数量级，r 只从小数点后第 5 位挪到第 9 位——开�
 
 结论：Pearson 只适合做结构性 sanity check（r 明显 <0.99 说明 token 错位等结构问题——错位使 ε 不再是小扰动而是打乱配对，`cov(a,b)` 崩塌）；**判别 true-on-policy 效果要看 MSE / mean|diff| / max|diff|**，它们随开关变化可差数个数量级。`match.csv` 已包含这些字段。
 
+## Qwen3-0.6B true-on-policy 效果不明显：原因分析（进行中）
+
+**现象**（2026-07-08，单卡，262144 tokens）：开 true-on-policy 后 MSE 仅 1.325e-3 → 1.204e-3（降 9%），mean|diff| 1.69e-2 → 1.57e-2（降 7%）。预期应降数个数量级至 ~0。
+
+**证据链（已排除的假设）**：
+
+1. ~~flag 未下发~~：对比两次运行的 `ray job submit` 命令行，true-on-policy 次包含全部开关（`--transformer-impl local --true-on-policy-contract --batch-invariant-mode --no-bias-swiglu-fusion --no-rope-fusion --deterministic-mode --true-on-policy-mode --recompute-logprobs-via-prefill` + SGLang `--sglang-enable-deterministic-inference --sglang-true-on-policy-contract --sglang-attention-backend fa3` + env `NCCL_ALGO=Ring / NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 / CUBLAS_WORKSPACE_CONFIG`），baseline 全无。下发正常。
+2. ~~Megatron 未打 patch~~：`/root/Megatron-LM/megatron/core/models/gpt/gpt_layer_specs.py` 存在 `use_true_on_policy_backend`（:325、:602），patch 在位。
+3. ~~测量管线错误~~：两次运行由 `Var = MSE/(2(1−r))` 反推 logprob 方差均 ≈1.2 nat²，公式自洽；logprob size / train-rollout 对齐校验通过。
+
+**指向 kernel 未真正对齐的证据**：
+
+- 数值指纹：true-on-policy 次 max|diff|=0.484375（=31/64）、p99=0.125（=1/8）全是二进制整格点，mean|diff|≈1.6e-2 ≈ logprob 量级下 bf16 的 1–2 ULP → **双侧都进了 bf16 路径**（`--true-on-policy-mode` 的精度对齐生效），**但两套 kernel 的 bf16 结果不同**。若 Megatron 真在用 SGLang math kernel，diff 应恰为 0。
+- prefill 重算部分生效：max|diff| 从 0.865 降到 0.484（decode 离群点被消掉），但主体失配不动。
+
+**当前嫌疑（按优先级）**：
+
+1. `--attention-backend flash`（`run_qwen3_4b.py` megatron 分支硬编码）与 SGLang fa3 的 attention 实现不一致——contract 的 kernel 交换若只覆盖 MLP/math 而 attention 各走各的，每层都残留 bf16 级差异并逐层放大。
+2. SGLang deterministic inference / fa3 静默回退（版本不支持时不报错）。
+3. kernel 交换覆盖不含 final norm / lm_head / logprob softmax 环节。
+
+**下一步**：用 token 对齐的逐层 hidden state 对比定位分歧起始层（2026-07-09 已按 `--micro-batch-size 1` 重跑，run 目录 `20260709_025156`；dumper 文件名格式实测为 `step=N___rank=R___dump_index=D___name=...___layer_id=L.pt`，`step` 每 microbatch 递增）。layer 0 即分歧 → attention/embedding 入口（嫌疑 1）；逐层递增 → kernel 相近不相同的累积误差；各层皆小但 logprob 差大 → 嫌疑 3。
+
 ## 在线 Metric：train_rollout_logprob_abs_diff
 
 `losses.py:policy_loss_function` 在每次训练 forward 中计算（`rollout_log_probs` 存在时）：
