@@ -174,7 +174,10 @@ def _load_dumper_files(dump_dir: Path) -> dict[int, list[tuple[int, np.ndarray]]
     grouped: dict[int, list[tuple[int, np.ndarray]]] = defaultdict(list)
     for f in files:
         layer_m = re.search(r"layer_id=(\d+)", f.stem)
-        step_m = re.search(r"step=(\d+)", f.stem)
+        # SGLang dumper names its per-forward counter forward_pass_id; accept
+        # step= too. Without it files would sort lexicographically (1,10,2,...)
+        # and the file->sample mapping of the aligned comparison breaks.
+        step_m = re.search(r"(?:forward_pass_id|step)=(\d+)", f.stem)
         if not layer_m:
             continue
         layer_id = int(layer_m.group(1))
