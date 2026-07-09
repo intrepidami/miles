@@ -27,6 +27,7 @@ title: True-On-Policy 实现细节
 | `rollout-shuffle`          | 关闭       | 保证可复现                  |
 | `rollout-seed`             | 42（默认） | 确定性采样                  |
 | `--skip-train-step`        | 开启       | 不修改权重，可反复跑        |
+| `--micro-batch-size 1`（替代 dynamic batch） | 开启 | Megatron dump 每文件一个样本、保持 rollout 顺序，token 对齐对比的前提 |
 | `--true-on-policy-mode`    | 开启       | 触发 Megatron 重算 logprobs |
 
 注：`--true-on-policy-mode` **不再**是 match 模式的默认参数。当前 `run_megatron.py` 设置 `true_on_policy=False`，**不**附加 `--true-on-policy-mode`，跑的是基线失配测量。`--true-on-policy-mode` 本身不设置 `--use-rollout-logprobs`，所以 `actor.py` 中 `not args.use_rollout_logprobs` 已为 True，Megatron 无条件重算 logprobs，无需 `--get-mismatch-metrics`。
@@ -227,9 +228,14 @@ logprob 文件由 `MILES_TRUE_ON_POLICY_SAVE_DIR` 机制产生；tensor_cmp 文�
 
 **Hidden state 对比**（自动，当 `tensor_cmp/` 存在时）
 
-从 `tensor_cmp/fwd_only/` 和 `tensor_cmp/engines/engine_0/` 读取 `.pt` 文件，按 `layer_id` 分组，按 `step` 排序后 concat，得到 `[total_tokens, hidden_dim]`。对每层计算 MSE 和 mean L2 diff。
+优先走 **token 对齐模式**（需 dump_details 提供 `total_lengths`/`response_lengths`，且运行来自 `--micro-batch-size 1` 的 match 模式）：
 
-注意：Megatron 是 full-sequence batch forward，SGLang 是 prefill(step=0) + 每 decode step 一个 token。两者 concat 后 token 总数应相同，但**顺序可能不同**（序列长度不一致时）。MSE 仅在形状和顺序均一致时有意义。
+1. Megatron 侧：每个 dumper 文件恰为一个样本（`[total_len, 1, hidden]`，rollout 顺序），逐文件校验 token 数等于该样本 `total_length`；
+2. SGLang 侧：decode step 文件（shape `[N, hidden]`）按 step 连续段取最长段堆成 `[T, N, hidden]`（T = response_len−1 或 response_len；prefill 干扰文件落在别的段被剔除）；
+3. 列匹配：SGLang decode 列顺序是引擎内部 batch 顺序，与样本顺序无关——用 t=0 处 hidden 的余弦相似度做 128×128 匹配（decode step t 对应 Megatron 位置 prompt_len+t），要求一一映射并在 t=T/2、T−1 复验（mean cosine ≥0.9）；
+4. 逐层输出对齐后的 **per-token MSE / mean L2 diff / mean token cosine**，写 `metrics/train_rollout_hidden_states_aligned.csv`。
+
+前提不满足（response 长度不一致、microbatch>1、decode 段缺失等）自动回退到旧的**非对齐概要**（均值向量 cosine + L2 norm 对比，仅量级参考）并打印原因。回退模式下 Megatron 是 full-sequence forward、SGLang 是 prefill+decode，token 集合与顺序都不同，MSE 无意义。
 
 **Mode 2 — dump_details .pt**
 
