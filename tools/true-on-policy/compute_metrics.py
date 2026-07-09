@@ -230,8 +230,13 @@ def _megatron_sample_seqs(
                 return None
             arr = arr[:, 0, :]
         total = length_pairs[k][1]
-        if arr.shape[0] != total:
-            print(f"    megatron: file {k} has {arr.shape[0]} tokens, expected total_length {total}")
+        # thd microbatches are padded to a multiple of get_batch's pad_multiplier
+        # (128); padding sits at the end of the packed sequence, trim it.
+        padded = ((total + 127) // 128) * 128
+        if arr.shape[0] == padded:
+            arr = arr[:total]
+        elif arr.shape[0] != total:
+            print(f"    megatron: file {k} has {arr.shape[0]} tokens, expected {total} (or padded {padded})")
             return None
         seqs.append(arr)
     return seqs
