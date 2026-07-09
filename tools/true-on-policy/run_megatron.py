@@ -131,10 +131,10 @@ def main() -> None:
     execute(args)
 
     # Move dump_details from OUTPUT_DIR/{run_id}/dump_details/ into the timestamped save_dir.
-    output_root = Path(OUTPUT_DIR)
-    run_dirs = sorted(output_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True) if output_root.exists() else []
-    dump_details_src = next((d / "dump_details" for d in run_dirs if (d / "dump_details").exists()), None)
-    if dump_details_src:
+    # Use this run's run_id, not the newest-mtime dir: the latter can grab a
+    # previous run's data when the current run produced none.
+    dump_details_src = Path(OUTPUT_DIR) / args.run_id / "dump_details"
+    if dump_details_src.exists():
         import shutil
         dump_details_dst = save_dir / "dump_details"
         shutil.move(str(dump_details_src), str(dump_details_dst))
