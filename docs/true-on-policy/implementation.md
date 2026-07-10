@@ -29,6 +29,17 @@ match 模式不用 5/6（固定 `--global-batch-size 128`、`--num-rollout 1`）
 
 并行度覆盖入口：`ScriptArgs.megatron_{tp,pp,cp,dp}_size`（`run_match.py` CLI `--megatron-tp/--megatron-pp/--megatron-cp/--megatron-dp`）。None（DP 为 1）= 模型推导默认。注意 TP>1 自动开 sequence-parallel（`use_sequence_parallel = tp > 1`），CP>1 用 `a2a`。
 
+## micro-batch-size 的影响面
+
+`--micro-batch-size` = 每个 DP rank 一次 forward/backward 的样本数；`梯度累积步数 = global_batch / (DP × micro_batch)`。四层影响：
+
+1. **训练语义**：理论不变（梯度按 global batch 平均，micro 只是分几口吃完），bf16 下仅累加顺序的 ULP 级差异。match 模式 `--skip-train-step`，此层无关。
+2. **显存/吞吐**：主要调节旋钮。micro 大 → activation 显存涨、kernel 效率高。正常训练不用固定 micro，走 `--use-dynamic-batch-size --max-tokens-per-gpu`（match 分支除外）。
+3. **logprob 数值**：thd 打包把 micro 内多个样本 token 拼一条大序列进 GEMM——batch 组成变 → GEMM 的 M 维变 → cuBLAS 选不同 tile/split-k → bf16 舍入不同。**同一样本的 logprob 会因"跟谁拼一批"而 bit 级变化**。mbs=1 消掉跨样本影响，结果确定可复现。
+4. **dump 对齐**：mbs=1 且关 dynamic batch 是 token 对齐对比的硬前提（见"错位 1 → 采集端修"）。mbs>1 一个 dumper 文件混多样本 + padding，离线切分对齐做不了。
+
+结论：正常训练里是吞吐/显存参数；match 模式里是**正确性参数**，必须 1——改大同时破坏 3 和 4。注意 CP>1 把序列切半分卡，等效引入另一种 batch 重组：跑 mega-cp2 前先用逐文件 token 数校验（错位 1 一节）确认 dump 仍每文件一个完整样本。
+
 ## match 模式参数
 
 `mode="match"` 时 `scripts/run_qwen3_4b.py` 使用以下配置：
