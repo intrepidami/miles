@@ -82,6 +82,7 @@ python tools/true-on-policy/compute_metrics.py --save-dir /root/true-on-policy/<
 - `--skip-prepare`
 - `--train-backend {megatron,fsdp}`: Training backend. Defaults to `megatron`.
 - `--true-on-policy`: Enable true-on-policy mode. If omitted, true-on-policy is disabled.
+- `--megatron-tp N` / `--megatron-pp N` / `--megatron-cp N` / `--megatron-dp N`: 覆盖 megatron 并行度（默认模型推导：0.6B 为 TP=1/CP=1，PP=1，DP=1）。actor 占 TP×PP×CP×DP 卡，须 ≤ `--num-gpus-per-node`。例 TP=2/CP=2/DP=2 共 8 卡：`--num-gpus-per-node 8 --megatron-tp 2 --megatron-cp 2 --megatron-dp 2`。注意：TP>1 自动开 sequence-parallel，CP>1 用 a2a——两者都改 kernel 数值路径，与单卡/SGLang(TP=1) 的 logprob 可比性口径不同。fsdp backend 忽略这四个参数。推导原理见 `implementation.md`"并行度与批量推导"。
 - `--capture-hidden-states`: 开启 Megatron hidden-state hook 落盘（`megatron_hs/`，默认关；fsdp backend 下忽略）
 - `--dumper-enable`: 开启 SGLang/Megatron tensor dumper 落盘（`tensor_cmp/`，默认关）
 

@@ -12,7 +12,22 @@ title: True-On-Policy 实现细节
 | `miles/backends/experimental/fsdp_utils/actor.py` | `_train_core()` 同样受 `args.skip_train_step` 保护（跳过 optimizer 循环，仍落盘 train data）                       |
 | `miles/backends/training_utils/log_utils.py` | 新增`_maybe_save_logprobs()`：在 `log_rollout_data()` 入口，当 `MILES_TRUE_ON_POLICY_SAVE_DIR` 设置时落盘 logprobs |
 | `miles/utils/misc.py`                        | `load_function` 支持文件路径格式 `/path/file.py:func`（原来只支持 dot-notation）                                     |
-| `scripts/run_qwen3_4b.py`                    | 新增`match` 模式；FSDP backend 时 `actor_num_gpus_per_node` 取 `num_gpus_per_node`（数据并行度=卡数），不再取 TP×PP×CP |
+| `scripts/run_qwen3_4b.py`                    | 新增`match` 模式；FSDP backend 时 `actor_num_gpus_per_node` 取 `num_gpus_per_node`（数据并行度=卡数），不再取 TP×PP×CP；新增 `megatron_tp_size` / `megatron_pp_size` / `megatron_cp_size` / `megatron_dp_size` 可选字段覆盖模型默认并行度，megatron actor 占 TP×PP×CP×DP 卡 |
+
+## 并行度与批量推导
+
+`execute()`（`scripts/run_qwen3_4b.py`）开头的推导链，从上往下：
+
+1. `model_parallel_size = TP × PP × CP` — 一个模型副本占的卡数。三维都在切同一个模型（TP 层内切权重、PP 切层、CP 切序列），正交相乘。
+2. `actor_num_gpus_per_node` — 训练 actor 每节点占卡数，两后端语义不同。FSDP：纯数据并行，每卡逻辑上是完整副本，直接取 `num_gpus_per_node`。Megatron：`model_parallel_size × megatron_dp_size`，先摆一份模型再复制 DP 份。
+3. `train_world_size = num_nodes × actor_num_gpus_per_node` — 训练总 rank 数。
+4. `data_parallel_size = max(1, train_world_size // model_parallel_size)` — 副本数 = 总卡数 ÷ 每副本卡数。FSDP 下 mps=1 → DP=卡数；megatron 下回推出 `megatron_dp_size`。`max(1,)` 防误配整除得 0。
+5. `debug_global_batch_size = data_parallel_size` — global batch 均分到 DP 副本，要求整除且每副本 ≥1 样本，合法最小值即 DP（每副本恰 1 条）。仅 debug_one_sample 模式使用。
+6. `debug_num_rollout = max(2, data_parallel_size)` — debug_one_sample 下每轮 rollout 只产 1 条样本（`rollout_batch_size=1`、`n_samples_per_prompt=1`），攒够 global batch（=DP）才触发一次训练 step，故至少 DP 轮；`max(2,·)` 保证 DP=1 时也跑 2 轮，第 2 轮才覆盖"权重更新后 rollout + weight sync"路径。
+
+match 模式不用 5/6（固定 `--global-batch-size 128`、`--num-rollout 1`），它们只服务 debug_one_sample。
+
+并行度覆盖入口：`ScriptArgs.megatron_{tp,pp,cp,dp}_size`（`run_match.py` CLI `--megatron-tp/--megatron-pp/--megatron-cp/--megatron-dp`）。None（DP 为 1）= 模型推导默认。注意 TP>1 自动开 sequence-parallel（`use_sequence_parallel = tp > 1`），CP>1 用 `a2a`。
 
 ## match 模式参数
 
