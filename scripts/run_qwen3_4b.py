@@ -36,6 +36,13 @@ class ScriptArgs(U.ExecuteTrainConfig):
     enable_mis: bool = False
     use_kl_loss: bool = True
     tis_use_rs: bool = True
+    # Megatron-only parallelism overrides; None keeps the model-derived default.
+    # megatron_dp_size replicates the TP*PP*CP group, so the actor uses
+    # TP*PP*CP*DP GPUs per node (fsdp ignores all three).
+    megatron_tp_size: int | None = None
+    megatron_pp_size: int | None = None
+    megatron_cp_size: int | None = None
+    megatron_dp_size: int = 1
 
     def __post_init__(self):
         if self.train_backend == "megatron":
@@ -44,9 +51,9 @@ class ScriptArgs(U.ExecuteTrainConfig):
         self.num_gpus_per_node = self.num_gpus_per_node or U.NUM_GPUS_OF_HARDWARE[self.hardware]
 
         # Derived parallelism defaults for Qwen3 dense models
-        self.tensor_model_parallel_size = 1 if self.model_name == "Qwen3-0.6B" else 2
-        self.pipeline_model_parallel_size = 1
-        self.context_parallel_size = 1 if self.model_name == "Qwen3-0.6B" else 4
+        self.tensor_model_parallel_size = self.megatron_tp_size or (1 if self.model_name == "Qwen3-0.6B" else 2)
+        self.pipeline_model_parallel_size = self.megatron_pp_size or 1
+        self.context_parallel_size = self.megatron_cp_size or (1 if self.model_name == "Qwen3-0.6B" else 4)
         self.cp_comm_type = "a2a" if self.context_parallel_size > 1 else None
         self.use_sequence_parallel = self.tensor_model_parallel_size > 1
         self.max_tokens_per_gpu = 32768 if self.train_backend == "fsdp" else 9216
@@ -93,8 +100,11 @@ def execute(args: ScriptArgs):
         args.tensor_model_parallel_size * args.pipeline_model_parallel_size * args.context_parallel_size
     )
     # FSDP is data-parallel: its degree is the GPU count, not TP*PP*CP (which
-    # is 1 for Qwen3-0.6B and would leave extra GPUs idle).
-    actor_num_gpus_per_node = args.num_gpus_per_node if args.train_backend == "fsdp" else model_parallel_size
+    # is 1 for Qwen3-0.6B and would leave extra GPUs idle). Megatron gets
+    # megatron_dp_size replicas of the TP*PP*CP group.
+    actor_num_gpus_per_node = (
+        args.num_gpus_per_node if args.train_backend == "fsdp" else model_parallel_size * args.megatron_dp_size
+    )
     train_world_size = args.num_nodes * actor_num_gpus_per_node
     data_parallel_size = max(1, train_world_size // model_parallel_size)
     debug_num_rollout = max(2, data_parallel_size)

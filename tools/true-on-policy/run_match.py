@@ -45,6 +45,10 @@ def _build_args(
     dumper_enable: bool,
     num_gpus_per_node: int | None = None,
     num_nodes: int | None = None,
+    megatron_tp: int | None = None,
+    megatron_pp: int | None = None,
+    megatron_cp: int | None = None,
+    megatron_dp: int | None = None,
 ):
     sys.path.insert(0, str(_REPO_ROOT))
     from scripts.run_qwen3_4b import ScriptArgs
@@ -80,6 +84,16 @@ def _build_args(
         kwargs["num_gpus_per_node"] = num_gpus_per_node
     if num_nodes is not None:
         kwargs["num_nodes"] = num_nodes
+    if any(v is not None for v in (megatron_tp, megatron_pp, megatron_cp, megatron_dp)) and train_backend != "megatron":
+        print("WARNING: --megatron-tp/--megatron-pp/--megatron-cp/--megatron-dp only apply to the megatron backend; ignored")
+    if megatron_tp is not None:
+        kwargs["megatron_tp_size"] = megatron_tp
+    if megatron_pp is not None:
+        kwargs["megatron_pp_size"] = megatron_pp
+    if megatron_cp is not None:
+        kwargs["megatron_cp_size"] = megatron_cp
+    if megatron_dp is not None:
+        kwargs["megatron_dp_size"] = megatron_dp
     return ScriptArgs(**kwargs)
 
 
@@ -108,6 +122,18 @@ def main() -> None:
         help="Training backend (default: megatron)",
     )
     parser.add_argument("--true-on-policy", action="store_true", help="Enable true-on-policy mode")
+    parser.add_argument(
+        "--megatron-tp", type=int, default=None, help="Megatron tensor-model-parallel size (default: model-derived)"
+    )
+    parser.add_argument(
+        "--megatron-pp", type=int, default=None, help="Megatron pipeline-model-parallel size (default: 1)"
+    )
+    parser.add_argument(
+        "--megatron-cp", type=int, default=None, help="Megatron context-parallel size (default: model-derived)"
+    )
+    parser.add_argument(
+        "--megatron-dp", type=int, default=None, help="Megatron data-parallel size (default: 1)"
+    )
     parser.add_argument(
         "--capture-hidden-states", action="store_true", help="Enable Megatron hidden-state capture hook"
     )
@@ -166,6 +192,10 @@ def main() -> None:
         dumper_enable=cli.dumper_enable,
         num_gpus_per_node=cli.num_gpus_per_node,
         num_nodes=cli.num_nodes,
+        megatron_tp=cli.megatron_tp,
+        megatron_pp=cli.megatron_pp,
+        megatron_cp=cli.megatron_cp,
+        megatron_dp=cli.megatron_dp,
     )
 
     if not cli.skip_prepare:
